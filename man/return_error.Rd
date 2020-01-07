@@ -9,8 +9,8 @@ return_error(data_results, data_test = NULL, test_indices = NULL,
   horizons = NULL, windows = NULL, group_filter = NULL)
 }
 \arguments{
-\item{data_results}{An object of class 'training_results' or 'forecast_results' from running
-\code{\link[=predict.forecast_model]{predict}} on a trained model.}
+\item{data_results}{An object of class 'training_results' or 'forecast_results' from running (a)
+\code{\link[=predict.forecast_model]{predict}} on a trained model or (b) \code{combine_forecasts()}.}
 
 \item{data_test}{Required for forecast results only. If \code{data_results} is an object of class 'forecast_results', a data.frame used to
 assess the accuracy of a 'forecast_results' object. \code{data_test} should have the outcome/target columns
@@ -19,8 +19,7 @@ and any grouping columns.}
 \item{test_indices}{Required if \code{data_test} is given. A vector or 1-column data.frame of numeric
 row indices or dates (class 'Date' or 'POSIXt') with length \code{nrow(data_test)}.}
 
-\item{metrics}{Common forecast error metrics. See the Error Metrics section below for details. The
-default behavior is to return all metrics.}
+\item{metrics}{A character vector of common forecast error metrics. The default behavior is to return all metrics.}
 
 \item{models}{Optional. A character vector of user-defined model names supplied to \code{train_model()}.}
 
@@ -34,7 +33,8 @@ default behavior is to return all metrics.}
 \value{
 An S3 object of class 'validation_error' or 'forecast_error': A list of data.frames
 of error metrics for the validation datasets or forecast dataset depending
-on the \code{data_test} argument. \cr
+on the \code{data_test} argument. An input to \code{data_results} from \code{combine_forecasts()} will return
+a single data.frame with results for each model passed in \code{...}. \cr
 
 A list containing: \cr
 

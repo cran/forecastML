@@ -1,5 +1,6 @@
 ## ---- include = FALSE----------------------------------------------------
-knitr::opts_chunk$set(fig.width = 6, fig.height = 4)
+knitr::opts_chunk$set(fig.width = 7, fig.height = 4)
+knitr::opts_knit$set(fig.width = 7, fig.height = 4)
 
 ## ---- message = FALSE, warning = FALSE-----------------------------------
 library(dplyr)
@@ -18,9 +19,6 @@ data <- forecastML::fill_gaps(data_buoy_gaps, date_col = 1, frequency = '1 day',
 
 print(list(paste0("The original dataset with gaps in data collection is ", nrow(data_buoy_gaps), " rows."), 
       paste0("The modified dataset with no gaps in data collection from fill_gaps() is ", nrow(data), " rows.")))
-
-## ------------------------------------------------------------------------
-DT::datatable(head(data), options = list(scrollX = TRUE))
 
 ## ------------------------------------------------------------------------
 data$day <- lubridate::mday(data$date)
@@ -50,7 +48,7 @@ data$date <- NULL  # Dates, however, don't need to be in the input data.
 
 frequency <- "1 day"  # A string that works in base::seq(..., by = "frequency").
 
-dynamic_features <- c("day", "year")  # Features that change through time but which we will not lag.
+dynamic_features <- c("day", "year")  # Features that change through time but which will not be lagged.
 
 groups <- "buoy_id"  # 1 forecast for each group or buoy.
 
@@ -65,8 +63,6 @@ data_train <- forecastML::create_lagged_df(data, type = type, outcome_col = outc
                                            dynamic_features = dynamic_features,
                                            groups = groups, static_features = static_features, 
                                            use_future = FALSE)
-
-print(paste0("The class of `data_train` is ", class(data_train)))
 
 DT::datatable(head(data_train$horizon_1), options = list(scrollX = TRUE))
 
@@ -91,11 +87,9 @@ p
 # The value of outcome_col can also be set in train_model() with train_model(outcome_col = 1).
 model_function <- function(data, outcome_col = 1) {
   
-  # xgboost cannot handle missing outcomes data so we'll remove it.
+  # xgboost cannot handle missing outcomes data so we'll remove this.
   data <- data[!is.na(data[, outcome_col]), ]
 
-  # 1 fixed validation dataset for early stopping. Ideally, we'd have many. 
-  # We'll use an 80/20 split.
   indices <- 1:nrow(data)
   
   set.seed(224)
@@ -115,6 +109,7 @@ model_function <- function(data, outcome_col = 1) {
   params <- list("objective" = "reg:linear")
 
   watchlist <- list(train = data_train, test = data_test)
+  
   set.seed(224)
   model <- xgboost::xgb.train(data = data_train, params = params, 
                               max.depth = 8, nthread = 2, nrounds = 30,
@@ -135,24 +130,18 @@ model_results_cv <- forecastML::train_model(lagged_df = data_train,
                                             use_future = FALSE)
 
 ## ------------------------------------------------------------------------
-print(paste0("The class of `model_results_cv` is ", class(model_results_cv)))
-
-## ------------------------------------------------------------------------
 summary(model_results_cv$horizon_1$window_1$model)
 
 ## ------------------------------------------------------------------------
+# If 'model' is passed as a named list, the prediction model would be accessed with model$model or model["model"].
 prediction_function <- function(model, data_features) {
   x <- xgboost::xgb.DMatrix(data = as.matrix(data_features))
   data_pred <- data.frame("y_pred" = predict(model, x))
   return(data_pred)
 }
 
-prediction_function <- list(prediction_function)
-
 ## ------------------------------------------------------------------------
-data_pred_cv <- predict(model_results_cv, prediction_function = prediction_function, data = data_train)
-
-print(paste0("The class of `data_pred_cv` is ", class(data_pred_cv)))
+data_pred_cv <- predict(model_results_cv, prediction_function = list(prediction_function), data = data_train)
 
 ## ---- message = FALSE, warning = FALSE-----------------------------------
 plot(data_pred_cv) + theme(legend.position = "none")
@@ -175,21 +164,16 @@ data_forecast <- forecastML::create_lagged_df(data, type = type, outcome_col = o
                                               groups = groups, static_features = static_features, 
                                               use_future = FALSE)
 
-print(paste0("The class of `data_forecast` is ", class(data_forecast)))
-
 DT::datatable(head(data_forecast$horizon_1), options = list(scrollX = TRUE))
 
 ## ------------------------------------------------------------------------
 for (i in seq_along(data_forecast)) {
-  data_forecast[[i]]$day <- lubridate::mday(data_forecast[[i]]$index)
+  data_forecast[[i]]$day <- lubridate::mday(data_forecast[[i]]$index)  # When dates are given, the 'index` is date-based.
   data_forecast[[i]]$year <- lubridate::year(data_forecast[[i]]$index)
 }
 
 ## ------------------------------------------------------------------------
-data_forecasts <- predict(model_results_cv, prediction_function = prediction_function, 
-                          data = data_forecast)
-
-print(paste0("The class of `data_forecasts` is ", class(data_forecasts)))
+data_forecasts <- predict(model_results_cv, prediction_function = list(prediction_function), data = data_forecast)
 
 ## ---- message = FALSE, warning = FALSE-----------------------------------
 plot(data_forecasts) + theme(legend.position = "none")
@@ -214,20 +198,25 @@ model_results_no_cv <- forecastML::train_model(lagged_df = data_train,
                                                use_future = FALSE)
 
 ## ------------------------------------------------------------------------
-print(paste0("The class of `model_results_no_cv` is ", class(model_results_no_cv)))
+data_forecasts <- predict(model_results_no_cv, prediction_function = list(prediction_function), data = data_forecast)
 
-## ------------------------------------------------------------------------
-data_forecasts <- predict(model_results_no_cv, prediction_function = prediction_function, 
-                          data = data_forecast)
-
-print(paste0("The class of `data_forecasts` is ", class(data_forecasts)))
-
-## ------------------------------------------------------------------------
 DT::datatable(head(data_forecasts), options = list(scrollX = TRUE))
 
 ## ---- message = FALSE, warning = FALSE-----------------------------------
 plot(data_forecasts)
 
 ## ---- message = FALSE, warning = FALSE-----------------------------------
-plot(data_forecasts, group_filter = "buoy_id == 1") + theme(legend.position = "none")
+data_combined <- forecastML::combine_forecasts(data_forecasts)
+
+# Plot a background dataset of actuals using the most recent data.
+data_actual <- data[dates >= as.Date("2018-11-01"), ]
+actual_indices <- dates[dates >= as.Date("2018-11-01")]
+
+# Plot all final forecasts plus historical data.
+plot(data_combined, data_actual = data_actual, actual_indices = actual_indices)
+
+## ------------------------------------------------------------------------
+# Plot final forecasts for a single buoy plus historical data.
+plot(data_combined, data_actual = data_actual, actual_indices = actual_indices,
+     group_filter = "buoy_id == 10")
 

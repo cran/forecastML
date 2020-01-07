@@ -28,6 +28,20 @@ The following quote from Bergmeir et al.'s article nicely sums up the aim of thi
 > (e.g., when using Machine Learning methods), the aforementioned problems of CV are largely
 > irrelevant, and CV can and should be used without modification, as in the independent case."
 
+
+## README Contents
+
+* **[Install](#install)**
+* **[Approach to forecasting](#approach-to-forecasting)**
+* **[Vignettes](#vignettes)**
+* **[Cheat sheets](#cheat-sheets)**
+* **[FAQ](#faq)**
+* **Examples**
+    + **[Forecasting numeric outcomes](#examples---numeric-outcomes-with-r-and-python)**
+    + **[Forecasting factor outcomes (forecasting sequences)](#examples---factor-outcomes-with-r-and-python)**
+* **[Roadmap](#roadmap)**
+
+
 ## Install
 
 * CRAN
@@ -43,25 +57,53 @@ library(forecastML)
 devtools::install_github("nredell/forecastML")
 library(forecastML)
 ```
+
+
+## Approach to Forecasting
+
+The forecasting approach used in `forecastML` involves the following steps:
+
+**1.** Build a series of horizon-specific short-, medium-, and long-term forecast models.
+
+**2.** Assess model generalization peformance across a variety of heldout datasets through time.
+
+**3.** Select those models that consistently performed the best at each forecast horizon and 
+combine them to produce a single ensemble forecast.
+
+* Below is a plot of 5 forecast models used to produce a single 12-step-ahead forecast where each color 
+represents a distinct horizon-specific ML model. From left to right these models are:
+
+* **1**: A feed-forward neural network (purple); **2**: An ensemble of ML models; 
+**3**: A boosted tree model; **4**: A LASSO regression model; **5**: A LASSO regression model (yellow).
+
+![](./tools/forecastML_plot.png)
+
+* Below is a similar combination of horizon-specific models with a factor outcome and forecasting factor 
+probabilities 12 steps ahead.
+
+![](./tools/forecastML_factor_plot.png)
+
+
 ## Vignettes
 
 The main functions covered in each vignette are shown below as `function()`.
 
 * Detailed **[forecastML overview vignette](https://nredell.github.io/forecastML/doc/package_overview.html)**. 
-`create_lagged_df()`, `create_windows()`, `train_model()`, `return_error()`, `return_hyper()`
+`create_lagged_df()`, `create_windows()`, `train_model()`, `return_error()`, `return_hyper()`, `combine_forecasts()`
 
 * **[Creating custom feature lags for model training](https://nredell.github.io/forecastML/doc/lagged_features.html)**. `create_lagged_df(lookback_control = ...)`
 
 * **[Forecasting with multiple or grouped time series](https://nredell.github.io/forecastML/doc/grouped_forecast.html)**. 
 `fill_gaps()`, 
-`create_lagged_df(dates = ..., dynamic_features = ..., groups = ..., static_features = ...)`, `create_windows()`, `train_model()`
+`create_lagged_df(dates = ..., dynamic_features = ..., groups = ..., static_features = ...)`, `create_windows()`, `train_model()`, `combine_forecasts()`
 
 * **[Customizing the user-defined wrapper functions](https://nredell.github.io/forecastML/doc/custom_functions.html)**. 
 `train()` and `predict()`
 
+
 ## Cheat Sheets
 
-![](./tools/forecastML_cheat_sheet.png)
+![](./tools/forecastML_cheat_sheet.PNG)
 
 1. **`fill_gaps`:** Optional if no temporal gaps/missing rows in data collection. Fill gaps in data collection and 
 prepare a dataset of evenly-spaced time series for modeling with lagged features. Returns a 'data.frame' with 
@@ -79,11 +121,14 @@ capabilities of the user-specified model.
 
 6. **`return_hyper`:** Return user-defined model hyperparameters across validation datasets.
 
-![](./tools/forecastML_cheat_sheet_data.png)
+7. **`combine_forecasts`:** Combine multiple horizon-specific forecast models to produce one forecast.
+
+![](./tools/forecastML_cheat_sheet_data.PNG)
 
 <br>
 
-![](./tools/forecastML_cheat_sheet_model.png)
+![](./tools/forecastML_cheat_sheet_model.PNG)
+
 
 ## FAQ
 
@@ -94,7 +139,16 @@ That said, the workflow for packages like `mlr3` and `caret` would mostly occur 
 modeling function which is passed into `forecastML::train_model()`. Refer to the wrapper function customization 
 vignette for more details.
 
-## Examples - R & Python
+* **Q:** How do I get the model training and forecasting datasets as well as the trained models out of the 
+`forecastML` pipeline?
+* **A:** After running `forecastML::create_lagged_df()` with either `type = "train"` or `type = "forecast"`, 
+the `data.frame`s can be accessed with `my_lagged_df$horizon_h` where "h" is an integer marking the 
+horizon-specific dataset (e.g., the value(s) passed in `horizons = ...`). The trained models from 
+`forecastML::train_model()` can be accessed with `my_trained_model$horizon_h$window_w$model` where "w" is 
+the validation window number from `forecastML::create_windows()`.
+
+
+## Examples - Numeric Outcomes with R and Python
 
 ### R
 
@@ -171,7 +225,6 @@ model_results <- forecastML::train_model(data_train,
 prediction_function <- function(model, data_features) {
 
   x <- as.matrix(data_features, ncol = ncol(data_features))
-
   data_pred <- data.frame("y_pred" = predict(model, x, s = "lambda.min"),  # 1 column is required.
                           "y_pred_lower" = predict(model, x, s = "lambda.min") - 50,  # optional.
                           "y_pred_upper" = predict(model, x, s = "lambda.min") + 50)  # optional.
@@ -190,15 +243,14 @@ plot(data_valid, horizons = c(1, 6, 12))
 
 # Forward-looking forecast data.frame.
 data_forecast <- forecastML::create_lagged_df(data_seatbelts, type = "forecast",
-                                              outcome_col = 1,
-                                              lookback = lookback, horizons = horizons)
+                                              outcome_col = 1, lookback = lookback, horizons = horizons)
 
 # Forecasts.
-data_forecasts <- predict(model_results, prediction_function = list(prediction_function),
-                          data = data_forecast)
+data_forecasts <- predict(model_results, prediction_function = list(prediction_function), data = data_forecast)
 
 # We'll plot a background dataset of actuals as well.
-plot(data_forecasts, data_actual = data_seatbelts[-(1:150), ], 
+plot(data_forecasts,
+     data_actual = data_seatbelts[-(1:150), ], 
      actual_indices = as.numeric(row.names(data_seatbelts[-(1:150), ])), 
      horizons = c(1, 6, 12), windows = c(5, 10, 15))
 ```
@@ -266,10 +318,12 @@ and returns for `py_model_function()` and `py_prediction_function()` are the sam
 be sure to expect and return `pandas` `DataFrame`s as conversion from `numpy` arrays has not been tested.
 
 ``` python
+
 import pandas as pd
 from sklearn import linear_model
+from sklearn.preprocessing import StandardScaler
 
-# User-define model.
+# User-defined model.
 # A user-defined wrapper function for model training that takes the following
 # arguments: (1) a horizon-specific pandas DataFrame made with create_lagged_df(..., type = "train")
 # (e.g., my_lagged_df$horizon_h)
@@ -278,21 +332,26 @@ def py_model_function(data):
   X = data.iloc[:, 1:]
   y = data.iloc[:, 0]
   
+  scaler = StandardScaler()
+  X = scaler.fit_transform(X)
+  
   model_lasso = linear_model.Lasso(alpha = 0.1)
   
   model_lasso.fit(X = X, y = y)
   
-  return(model_lasso)
+  return({'model': model_lasso, 'scaler': scaler})
 
 # User-defined prediction function.
 # The predict() wrapper function takes 2 positional arguments. First,
 # the returned model from the user-defined modeling function (py_model_function() above).
-# Second, a pandas DataFrame of model features. The function
+# Second, a pandas DataFrame of model features. For numeric outcomes, the function 
 # can return a 1- or 3-column pandas DataFrame with either (a) point
 # forecasts or (b) point forecasts plus lower and upper forecast bounds (column order and names do not matter).
-def py_prediction_function(model, data_x):
+def py_prediction_function(model_list, data_x):
   
-  data_pred = pd.DataFrame({'y_pred': model.predict(data_x)})
+  data_x = model_list['scaler'].transform(data_x)
+  
+  data_pred = pd.DataFrame({'y_pred': model_list['model'].predict(data_x)})
   
   return(data_pred)
 ```
@@ -333,14 +392,171 @@ data_forecasts <- predict(model_results, prediction_function = list(py_predictio
                           data = data_forecast)
 
 # We'll plot a background dataset of actuals as well.
-plot(data_forecasts, data_actual = data_seatbelts[-(1:150), ],
+plot(data_forecasts, data_actual = data_seatbelts[-(1:150), ], 
      actual_indices = dates[-(1:150)], horizons = c(1, 12))
 ```
 ![](./tools/forecasts_python.png)
 
 ***
 
+
+## Examples - Factor Outcomes with R and Python
+
+### R
+
+* This example is similar to the numeric outcome examples with the exception that the outcome has been 
+factorized to illustrate how factors or sequences are forecasted.
+
+``` r
+data("data_seatbelts", package = "forecastML")
+
+# Create an artifical factor outcome for illustration' sake.
+data_seatbelts$DriversKilled <- cut(data_seatbelts$DriversKilled, 3)
+
+horizons <- c(1, 12)  # 2 models that forecast 1 and 1:12 time steps ahead.
+
+# A lookback across select time steps in the past. Feature lag 1 will be silently dropped from the 12-step-ahead model.
+lookback <- c(1, 12, 18)
+
+date_frequency <- "1 month"  # Time step frequency.
+
+# The date indices, which don't come with the stock dataset, should not be included in the modeling data.frame.
+dates <- seq(as.Date("1969-01-01"), as.Date("1984-12-01"), by = date_frequency)
+
+# Create a dataset of features for modeling.
+data_train <- forecastML::create_lagged_df(data_seatbelts, type = "train", outcome_col = 1,
+                                           lookback = lookback, horizon = horizons,
+                                           dates = dates, frequency = date_frequency)
+
+# We won't use nested cross-validation; rather, we'll train a model over the entire training dataset.
+windows <- forecastML::create_windows(data_train, window_length = 0)
+
+# This is the model-training dataset.
+plot(windows, data_train)
+```
+
+![](./tools/sequence_windows.png)
+
+* Model training and historical fit.
+
+``` r
+model_function <- function(data, my_outcome_col) {  # my_outcome_col = 1 could be defined here.
+  
+  outcome_names <- names(data)[1]
+  model_formula <- formula(paste0(outcome_names,  "~ ."))
+  
+  set.seed(224)
+  model <- randomForest::randomForest(formula = model_formula, data = data, ntree = 3)
+  return(model)  # This model is the first argument in the user-defined predict() function below.
+}
+
+#------------------------------------------------------------------------------
+# Train a model across forecast horizons and validation datasets.
+# my_outcome_col = 1 is passed in ... but could have been defined in the user-defined model function.
+model_results <- forecastML::train_model(data_train,
+                                         windows = windows,
+                                         model_name = "RF", 
+                                         model_function = model_function,
+                                         my_outcome_col = 1,  # ...
+                                         use_future = FALSE)
+
+#------------------------------------------------------------------------------
+# User-defined prediction function.
+#
+# The predict() wrapper function takes 2 positional arguments. First,
+# the returned model from the user-defined modeling function (model_function() above).
+# Second, a data.frame of model features. If predicting on validation data, expect the input data to be 
+# passed in the same format as returned by create_lagged_df(type = 'train') but with the outcome column 
+# removed. If forecasting, expect the input data to be in the same format as returned by 
+# create_lagged_df(type = 'forecast') but with the 'index' and 'horizon' columns removed.
+# 
+# For factor outcomes, the function can return either (a) a 1-column data.frame with factor level 
+# predictions or (b) an L-column data.frame of predicted class probabilities where 'L' equals the 
+# number of levels in the outcome; the order of the return()'d columns should match the order of the 
+# outcome factor levels from left to right which is the default behavior of most predict() functions.
+
+# Predict/forecast a single factor level.
+prediction_function_level <- function(model, data_features) {
+  
+  data_pred <- data.frame("y_pred" = predict(model, data_features, type = "response"))
+  
+  return(data_pred)
+}
+
+# Predict/forecast outcome class probabilities.
+prediction_function_prob <- function(model, data_features) {
+  
+  data_pred <- data.frame("y_pred" = predict(model, data_features, type = "prob"))
+  
+  return(data_pred)
+}
+
+# Predict on the validation datasets.
+data_valid_level <- predict(model_results, 
+                            prediction_function = list(prediction_function_level), 
+                            data = data_train)
+data_valid_prob <- predict(model_results, 
+                           prediction_function = list(prediction_function_prob), 
+                           data = data_train)
+
+```
+
+* Predict historical factor levels.
+
+* With `window_length = 0` these are essentially plots of model fit.
+
+``` r
+plot(data_valid_level, horizons = c(1, 12))
+```
+
+![](./tools/sequence_valid_level.png)
+
+* Predict historical class probabilities.
+
+``` r
+plot(data_valid_prob, horizons = c(1, 12))
+```
+
+![](./tools/sequence_valid_prob.png)
+
+* Forecast
+
+``` r
+# Forward-looking forecast data.frame.
+data_forecast <- forecastML::create_lagged_df(data_seatbelts, type = "forecast",
+                                              outcome_col = 1, lookback = lookback, horizons = horizons)
+
+# Forecasts.
+data_forecasts_level <- predict(model_results,
+                                prediction_function = list(prediction_function_level),
+                                data = data_forecast)
+
+data_forecasts_prob <- predict(model_results,
+                                prediction_function = list(prediction_function_prob),
+                                data = data_forecast)
+```
+
+* Forecast factor levels
+
+``` r
+plot(data_forecasts_level)
+```
+
+![](./tools/sequence_forecast_level.png)
+
+* Forecast class probabilities
+
+``` r
+plot(data_forecasts_prob)
+```
+
+![](./tools/sequence_forecast_prob.png)
+
+
 ## Roadmap
 
 * Refactor to incorporate `tsibble` time series datasets and principles.
-    
+
+* Add more forecast error metrics.
+
+* Add confidence/credible forecast intervals based on validation window performance.

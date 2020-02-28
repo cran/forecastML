@@ -1,6 +1,6 @@
 #' Create time-contiguous validation datasets for model evaluation
 #'
-#' Flexibly ceate blocks of time-contiguous validation datasets to assess forecast accuracy
+#' Flexibly create blocks of time-contiguous validation datasets to assess the forecast accuracy
 #' of trained models at various times in the past. These validation datasets are similar to
 #' the outer loop of a nested cross-validation model training setup.
 #'
@@ -42,6 +42,7 @@ create_windows <- function(lagged_df, window_length = 12L,
                            window_start = NULL, window_stop = NULL, skip = 0,
                            include_partial_window = TRUE) {
 
+  #----------------------------------------------------------------------------
   if (!methods::is(lagged_df, "lagged_df")) {
     stop("This function takes an object of class 'lagged_df' as input. Run create_lagged_df() first.")
   }
@@ -49,28 +50,22 @@ create_windows <- function(lagged_df, window_length = 12L,
   data <- lagged_df
   rm(lagged_df)
 
-  if (length(window_length) != 1 || !methods::is(window_length, c("numeric"))) {
-    stop("The 'window_length' argument needs to be a positive integer of length 1.")
+  if (length(window_length) != 1 || !methods::is(window_length, "numeric")) {
+    stop("The 'window_length' argument needs to be a single positive integer.")
   }
-
+  #----------------------------------------------------------------------------
   outcome_col <- attributes(data)$outcome_col
-  outcome_names <- attributes(data)$outcome_names
+  outcome_name <- attributes(data)$outcome_name
   date_indices <- attributes(data)$date_indices
   frequency <- attributes(data)$frequency
   data_start <- attributes(data)$data_start
   data_stop <- attributes(data)$data_stop
-
+  #----------------------------------------------------------------------------
   window_start <- if (is.null(window_start)) {data_start} else {window_start}
   window_stop <- if (is.null(window_stop)) {data_stop} else {window_stop}
 
-  if (!is.null(date_indices) && !methods::is(window_start, "Date") && !methods::is(window_start, "POSIXt")) {
-    stop("Dates were provided with the input dataset created with 'create_lagged_df()';
-         Enter a vector of window start dates of class 'Date' or 'POSIXt'.")
-  }
-
-  if (!is.null(date_indices) && !methods::is(window_stop, "Date") && !methods::is(window_stop, "POSIXt")) {
-    stop("Dates were provided with the input dataset created with 'create_lagged_df()';
-         Enter a vector of window stop dates of class 'Date' or 'POSIXt'.")
+  if (!is.null(date_indices) && !xor((methods::is(window_start, "Date") && methods::is(window_stop, "Date")), ((methods::is(window_start, "POSIXt") && methods::is(window_stop, "POSIXt"))))) {
+    stop("Dates were provided with the input dataset created with 'create_lagged_df()'; Enter a vector of window start dates of class 'Date' or 'POSIXt'.")
   }
 
   if (length(window_start) == 1 && length(window_stop) == 1) {  # A single start and stop date.
@@ -178,7 +173,7 @@ create_windows <- function(lagged_df, window_length = 12L,
   attributes(window_matrices) <- unlist(list(attributes(window_matrices),  # Keep the data.frame's attributes.
                                              list("skip" = skip,
                                                   "outcome_col" = outcome_col,
-                                                  "outcome_names" = outcome_names)), recursive = FALSE)
+                                                  "outcome_name" = outcome_name)), recursive = FALSE)
 
   class(window_matrices) <- c("windows", class(window_matrices))
 
@@ -201,10 +196,7 @@ create_windows <- function(lagged_df, window_length = 12L,
 #' @export
 plot.windows <- function(x, lagged_df, show_labels = TRUE, group_filter = NULL, ...) { # nocov start
 
-  if (!methods::is(x, "windows")) {
-    stop("The 'x' argument takes an object of class 'windows' as input. Run create_windows() first.")
-  }
-
+  #----------------------------------------------------------------------------
   if (!methods::is(lagged_df, "lagged_df")) {
     stop("The 'lagged_df' argument takes an object of class 'lagged_df' as input. Run create_lagged_df() first.")
   }
@@ -214,16 +206,25 @@ plot.windows <- function(x, lagged_df, show_labels = TRUE, group_filter = NULL, 
 
   data <- lagged_df
   rm(lagged_df)
-
+  #----------------------------------------------------------------------------
+  method <- attributes(data)$method
+  outcome <- attributes(data)$outcome
   outcome_col <- attributes(data)$outcome_col
-  outcome_names <- attributes(data)$outcome_names
+  outcome_name <- attributes(data)$outcome_name
   outcome_levels <- attributes(data)$outcome_levels
   row_indices <- attributes(data)$row_indices
   date_indices <- attributes(data)$date_indices
   groups <- attributes(data)$groups
-
+  #----------------------------------------------------------------------------
   # If there are multiple horizons in the lagged_df, select the first dataset and columns for plotting.
-  data_plot <- dplyr::select(data[[1]], outcome_names, groups)
+  if (method == "direct") {
+
+    data_plot <- dplyr::select(data[[1]], !!outcome_name, !!groups)
+
+    } else if (method == "multi_output") {
+
+    data_plot <- dplyr::bind_cols(outcome, dplyr::select(data[[1]], !!groups))
+  }
 
   if (is.null(date_indices)) {  # Index-based x-axis in plot.
 
@@ -239,7 +240,6 @@ plot.windows <- function(x, lagged_df, show_labels = TRUE, group_filter = NULL, 
     data_plot <- dplyr::filter(data_plot, eval(parse(text = group_filter)))
   }
   #----------------------------------------------------------------------------
-
   # Create different line segments in ggplot with `color = ggplot_color_group`.
   data_plot$ggplot_color_group <- apply(data_plot[, groups, drop = FALSE], 1, function(x) {paste(x, collapse = "-")})
 
@@ -272,21 +272,21 @@ plot.windows <- function(x, lagged_df, show_labels = TRUE, group_filter = NULL, 
 
     data_plot <- dplyr::left_join(data_plot_template, data_plot, by = c("index", "ggplot_color_group"))
 
-    data_plot$ggplot_color_group <- ordered(data_plot$ggplot_color_group)
+    data_plot$ggplot_color_group <- factor(data_plot$ggplot_color_group, levels = unique(data_plot$ggplot_color_group), ordered = TRUE)
 
     # Create a dataset of points for those instances where there the outcomes are NA before and after a given instance.
     # Points are needed because ggplot will not plot a 1-instance geom_line().
     data_plot_point <- data_plot %>%
       dplyr::group_by(.data$ggplot_color_group) %>%
-      dplyr::mutate("lag" = dplyr::lag(eval(parse(text = outcome_names)), 1),
-                    "lead" = dplyr::lead(eval(parse(text = outcome_names)), 1)) %>%
+      dplyr::mutate("lag" = dplyr::lag(eval(parse(text = outcome_name)), 1),
+                    "lead" = dplyr::lead(eval(parse(text = outcome_name)), 1)) %>%
       dplyr::filter(is.na(.data$lag) & is.na(.data$lead))
 
-    data_plot_point$ggplot_color_group <- factor(data_plot_point$ggplot_color_group, ordered = TRUE, levels(data_plot$ggplot_color_group))
+    data_plot_point$ggplot_color_group <- factor(data_plot_point$ggplot_color_group, levels = levels(data_plot$ggplot_color_group), ordered = TRUE)
 
-  } else {
+  } else {  # Grouped time series.
 
-    data_plot$ggplot_color_group <- ordered(data_plot$ggplot_color_group)
+    data_plot$ggplot_color_group <- factor(data_plot$ggplot_color_group, levels = unique(data_plot$ggplot_color_group), ordered = TRUE)
   }
   #----------------------------------------------------------------------------
 
@@ -296,18 +296,21 @@ plot.windows <- function(x, lagged_df, show_labels = TRUE, group_filter = NULL, 
 
   if (is.null(outcome_levels)) {  # Numeric outcome.
 
-    p <- p + geom_line(data = data_plot, aes(x = .data$index, y = eval(parse(text = outcome_names)),
+    p <- p + geom_line(data = data_plot, aes(x = .data$index, y = eval(parse(text = outcome_name)),
                                              color = .data$ggplot_color_group), size = 1.05)
 
   } else {  # Factor outcome.
 
-    p <- p + geom_tile(data = data_plot, aes(x = .data$index, y = ordered(.data$ggplot_color_group),
-                                             fill = ordered(eval(parse(text = outcome_names)))))
+    data_plot <- data_plot[!is.na(data_plot[, outcome_name]), ]  # Removes NA from the legend from geom_tile().
+    data_plot[, outcome_name] <- factor(data_plot[, outcome_name], levels = outcome_levels, ordered = TRUE)
+
+    p <- p + geom_tile(data = data_plot, aes(x = .data$index, y = .data$ggplot_color_group,
+                                             fill = eval(parse(text = outcome_name))))
   }
 
   if (!is.null(groups) && is.null(outcome_levels)) {  # Numeric outcome with groups.
     if (nrow(data_plot_point) >= 1) {
-      p <- p + geom_point(data = data_plot_point, aes(x = .data$index, y = eval(parse(text = outcome_names)),
+      p <- p + geom_point(data = data_plot_point, aes(x = .data$index, y = eval(parse(text = outcome_name)),
                                                       color = .data$ggplot_color_group), show.legend = FALSE)
     }
   }

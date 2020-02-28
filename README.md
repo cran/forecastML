@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="tools/direct_forecast_illustration.PNG" width="400px"></img>
+</p>
+
 [![CRAN](https://www.r-pkg.org/badges/version/forecastML)](https://cran.r-project.org/package=forecastML)
 [![lifecycle](https://img.shields.io/badge/lifecycle-maturing-blue.svg)](https://www.tidyverse.org/lifecycle/#maturing)
 [![Travis Build
@@ -7,20 +11,12 @@ Status](https://travis-ci.org/nredell/forecastML.svg?branch=master)](https://tra
 # package::forecastML <img src="./man/figures/forecastML_logo.png" alt="forecastML logo" align="right" height="138.5" style="display: inline-block;">
 
 The purpose of `forecastML` is to provide a series of functions and visualizations that simplify the process of 
-**multi-step-ahead direct forecasting with standard machine learning algorithms**. It's a wrapper package aimed at providing maximum flexibility in model-building--**choose any machine learning algorithm from any `R` or `Python` package**--while helping the user quickly assess the (a) accuracy, (b) stability, and (c) generalizability of grouped (i.e., 
-multiple related time series) and ungrouped single-outcome forecasts produced from potentially high-dimensional modeling datasets.
+**multi-step-ahead forecasting with standard machine learning algorithms**. It's a wrapper package aimed at providing maximum flexibility in model-building--**choose any machine learning algorithm from any `R` or `Python` package**--while helping the user quickly assess the (a) accuracy, (b) stability, and (c) generalizability of grouped (i.e., 
+multiple related time series) and ungrouped forecasts produced from potentially high-dimensional modeling datasets.
 
 This package is inspired by Bergmeir, Hyndman, and Koo's 2018 paper 
 [A note on the validity of cross-validation for evaluating autoregressive time series prediction](https://doi.org/10.1016/j.csda.2017.11.003). 
-In particular, `forecastML` makes use of 
-
-* **lagged, grouped, dynamic,** and **static features**,
-* **simple wrapper functions that support models from any `R` or `Python` package**,
-* **nested cross-validation** with (a) user-specified standard cross-validation in the inner loop and (b) block-contiguous validation 
-datasets in the outer loop, and
-* **parallel processing** with the `future` package 
-
-to build and evaluate high-dimensional forecast models **without having to use methods that are time series specific**. 
+which supports--under certain conditions--forecasting with high-dimensional ML models **without having to use methods that are time series specific**. 
 
 The following quote from Bergmeir et al.'s article nicely sums up the aim of this package:
 
@@ -28,6 +24,50 @@ The following quote from Bergmeir et al.'s article nicely sums up the aim of thi
 > (e.g., when using Machine Learning methods), the aforementioned problems of CV are largely
 > irrelevant, and CV can and should be used without modification, as in the independent case."
 
+At a glance, `forecastML` supports the following approaches when forecasting with machine learning methods:
+
+<p align="center">
+  <img src="./tools/features_table.png" width="715px" height="400px"></img>
+</p>
+
+
+## Lightning Example
+
+``` r
+library(forecastML)
+library(glmnet)
+
+data("data_seatbelts", package = "forecastML")
+
+data_train <- forecastML::create_lagged_df(data_seatbelts, type = "train", method = "direct",
+                                           outcome_col = 1, lookback = 1:15, horizon = 1:12)
+
+windows <- forecastML::create_windows(data_train, window_length = 0)
+
+model_fun <- function(data) {
+  x <- as.matrix(data[, -1, drop = FALSE])
+  y <- as.matrix(data[, 1, drop = FALSE])
+  model <- glmnet::cv.glmnet(x, y)
+}
+
+model_results <- forecastML::train_model(data_train, windows, model_name = "LASSO", model_function = model_fun)
+
+prediction_fun <- function(model, data_features) {
+  data_pred <- data.frame("y_pred" = predict(model, as.matrix(data_features)),
+                          "y_pred_lower" = predict(model, as.matrix(data_features)) - 30,
+                          "y_pred_upper" = predict(model, as.matrix(data_features)) + 30)
+}
+
+data_forecast <- forecastML::create_lagged_df(data_seatbelts, type = "forecast", method = "direct",
+                                              outcome_col = 1, lookback = 1:15, horizon = 1:12)
+
+data_forecasts <- predict(model_results, prediction_function = list(prediction_fun), data = data_forecast)
+
+data_forecasts <- forecastML::combine_forecasts(data_forecasts)
+
+plot(data_forecasts, data_actual = data_seatbelts[-(1:100), ], actual_indices = (1:nrow(data_seatbelts))[-(1:100)])
+```
+![](./tools/lightning_example.png)
 
 ## README Contents
 
@@ -38,6 +78,8 @@ The following quote from Bergmeir et al.'s article nicely sums up the aim of thi
 * **[FAQ](#faq)**
 * **Examples**
     + **[Forecasting numeric outcomes](#examples---numeric-outcomes-with-r-and-python)**
+        + **[Direct forecasting](#direct-forecast-in-r)**
+        + **[Multi-output forecasting](#multi-output-forecast-in-r)**
     + **[Forecasting factor outcomes (forecasting sequences)](#examples---factor-outcomes-with-r-and-python)**
 * **[Roadmap](#roadmap)**
 
@@ -61,11 +103,13 @@ library(forecastML)
 
 ## Approach to Forecasting
 
-The forecasting approach used in `forecastML` involves the following steps:
+### Direct forecasting
+
+The direct forecasting approach used in `forecastML` involves the following steps:
 
 **1.** Build a series of horizon-specific short-, medium-, and long-term forecast models.
 
-**2.** Assess model generalization peformance across a variety of heldout datasets through time.
+**2.** Assess model generalization performance across a variety of heldout datasets through time.
 
 **3.** Select those models that consistently performed the best at each forecast horizon and 
 combine them to produce a single ensemble forecast.
@@ -84,6 +128,17 @@ probabilities 12 steps ahead.
 ![](./tools/forecastML_factor_plot.png)
 
 
+### Multi-output forecasting
+
+The multi-output forecasting approach used in `forecastML` involves the following steps:
+
+**1.** Build a single multi-output model that simultaneously forecasts over both short- and long-term forecast horizons.
+
+**2.** Assess model generalization performance across a variety of heldout datasets through time.
+
+**3.** Select the hyperparamters that minimize forecast error overall the relevant forecast horizons and re-train.
+
+
 ## Vignettes
 
 The main functions covered in each vignette are shown below as `function()`.
@@ -93,7 +148,11 @@ The main functions covered in each vignette are shown below as `function()`.
 
 * **[Creating custom feature lags for model training](https://nredell.github.io/forecastML/doc/lagged_features.html)**. `create_lagged_df(lookback_control = ...)`
 
-* **[Forecasting with multiple or grouped time series](https://nredell.github.io/forecastML/doc/grouped_forecast.html)**. 
+* **[Direct Forecasting with multiple or grouped time series](https://nredell.github.io/forecastML/doc/grouped_forecast.html)**. 
+`fill_gaps()`, 
+`create_lagged_df(dates = ..., dynamic_features = ..., groups = ..., static_features = ...)`, `create_windows()`, `train_model()`, `combine_forecasts()`
+
+* **[Direct Forecasting with multiple or grouped time series - Sequences](https://nredell.github.io/forecastML/doc/grouped_forecast_sequences.html)**. 
 `fill_gaps()`, 
 `create_lagged_df(dates = ..., dynamic_features = ..., groups = ..., static_features = ...)`, `create_windows()`, `train_model()`, `combine_forecasts()`
 
@@ -150,7 +209,7 @@ the validation window number from `forecastML::create_windows()`.
 
 ## Examples - Numeric Outcomes with R and Python
 
-### R
+### Direct forecast in R
 
 Below is an example of how to create 12 horizon-specific ML models to forecast the number of `DriversKilled` 
 12 time periods into the future using the `Seatbelts` dataset. Notice in the last plot that there are multiple forecasts; 
@@ -259,7 +318,7 @@ plot(data_forecasts,
 
 ***
 
-### R & Python
+### Direct forecast in R & Python
 
 Now we'll look at an example similar to above. The main difference is that our user-defined modeling 
 and prediction functions are now written in `Python`. Thanks to the [reticulate](https://github.com/rstudio/reticulate) 
@@ -398,6 +457,107 @@ plot(data_forecasts, data_actual = data_seatbelts[-(1:150), ],
 ![](./tools/forecasts_python.png)
 
 ***
+
+### Multi-output forecast in R
+
+* This is the same seatbelt dataset example except now, instead of 1 model for each 
+forecast horizon, we'll build 1 multi-output neural network model that forecasts 12 
+steps into the future.
+
+* Given that this is a small dataset, the multi-output approach would require a decent 
+amount of tuning to produce accurate results. An alternative would be to forecast, say, 
+horizons 6 through 12 if longer term forecasts were of interest to reduce the number of 
+parameters; the output neurons do not have to start at a horizon of 1 or even be contiguous.
+
+``` r
+library(forecastML)
+library(keras)  # Using the TensorFlow 2.0 backend.
+
+data("data_seatbelts", package = "forecastML")
+
+data_seatbelts[] <- lapply(data_seatbelts, function(x) {
+  (x - mean(x, na.rm = TRUE)) / sd(x, na.rm = TRUE)
+})
+
+date_frequency <- "1 month"
+dates <- seq(as.Date("1969-01-01"), as.Date("1984-12-01"), by = date_frequency)
+
+data_train <- forecastML::create_lagged_df(data_seatbelts, type = "train", method = "multi_output",
+                                           outcome_col = 1, lookback = 1:15, horizons = 1:12,
+                                           dates = dates, frequency = date_frequency,
+                                           dynamic_features = "law")
+
+# 'window_length = 0' creates 1 historical training dataset with no external validation datasets. 
+# Set it to, say, 24 to see the model and forecast stability when trained across different slices 
+# of historical data.
+windows <- forecastML::create_windows(data_train, window_length = 0)
+
+#------------------------------------------------------------------------------
+# 'data_y' consists of 1 column for each forecast horizon--here, 12.
+model_fun <- function(data, horizons) {  # 'horizons' is passed in train_model().
+
+  data_x <- apply(as.matrix(data[, -(1:length(horizons))]), 2, function(x){ifelse(is.na(x), 0, x)})
+  data_y <- apply(as.matrix(data[, 1:length(horizons)]), 2, function(x){ifelse(is.na(x), 0, x)})
+
+  layers_x_input <- keras::layer_input(shape = ncol(data_x))
+
+  layers_x_output <- layers_x_input %>%
+    keras::layer_dense(ncol(data_x), activation = "relu") %>%
+    keras::layer_dense(ncol(data_x), activation = "relu") %>%
+    keras::layer_dense(length(horizons))
+
+  model <- keras::keras_model(inputs = layers_x_input, outputs = layers_x_output) %>%
+    keras::compile(optimizer = 'adam', loss = 'mean_absolute_error')
+
+  early_stopping <- callback_early_stopping(monitor = 'val_loss', patience = 2)
+
+  tensorflow::tf$random$set_seed(224)
+
+  model_results <- model %>%
+    keras::fit(x = list(as.matrix(data_x)), y = list(as.matrix(data_y)),
+               validation_split = 0.2, callbacks = c(early_stopping), verbose = FALSE)
+
+  return(list("model" = model, "model_results" = model_results))
+}
+#------------------------------------------------------------------------------
+# The predict() wrapper function will return a data.frame with a number of columns 
+# equaling the number of forecast horizons.
+prediction_fun <- function(model, data_features) {
+
+  data_features[] <- lapply(data_features, function(x){ifelse(is.na(x), 0, x)})
+  data_features <- list(as.matrix(data_features, ncol = ncol(data_features)))
+
+  data_pred <- data.frame(predict(model$model, data_features))
+  names(data_pred) <- paste0("y_pred_", 1:ncol(data_pred))
+
+  return(data_pred)
+}
+#------------------------------------------------------------------------------
+
+model_results <- forecastML::train_model(data_train, windows, model_name = "Multi-Output NN",
+                                         model_function = model_fun,
+                                         horizons = 1:12)
+
+data_valid <- predict(model_results, prediction_function = list(prediction_fun), data = data_train)
+
+# We'll plot select forecast horizons to reduce visual clutter.
+plot(data_valid, facet = ~ model, horizons = c(1, 3, 6, 12))
+```
+![](./tools/multi_outcome_train_plot.png)
+
+* Forecast combinations from `combine_forecasts()` aren't necessary as we've trained only 1 model.
+
+``` r
+data_forecast <- forecastML::create_lagged_df(data_seatbelts, type = "forecast", method = "multi_output",
+                                              outcome_col = 1, lookback = 1:15, horizons = 1:12,
+                                              dates = dates, frequency = date_frequency,
+                                              dynamic_features = "law")
+
+data_forecasts <- predict(model_results, prediction_function = list(prediction_fun), data = data_forecast)
+
+plot(data_forecasts, facet = NULL, data_actual = data_seatbelts[-(1:100), ], actual_indices = dates[-(1:100)])
+```
+![](./tools/multi_outcome_forecast_plot.png)
 
 
 ## Examples - Factor Outcomes with R and Python
@@ -555,8 +715,7 @@ plot(data_forecasts_prob)
 
 ## Roadmap
 
-* Refactor to incorporate `tsibble` time series datasets and principles.
-
 * Add more forecast error metrics.
 
 * Add confidence/credible forecast intervals based on validation window performance.
+ 

@@ -11,6 +11,9 @@ library(xgboost)
 
 data("data_buoy_gaps", package = "forecastML")
 
+data_buoy_gaps$wind_spd <- cut(data_buoy_gaps$wind_spd, breaks = c(-1, 3, 5, 8, 10),
+                               ordered_result = TRUE)  # Create the factor outcome.
+
 DT::datatable(head(data_buoy_gaps), options = list(scrollX = TRUE))
 
 ## -----------------------------------------------------------------------------
@@ -25,12 +28,11 @@ data$day <- lubridate::mday(data$date)
 data$year <- lubridate::year(data$date)
 
 ## ---- message = FALSE, warning = FALSE----------------------------------------
-p <- ggplot(data, aes(x = date, y = wind_spd, color = ordered(buoy_id), group = year))
-p <- p + geom_line()
+p <- ggplot(data[!is.na(data$wind_spd), ], aes(x = date, y = 1, fill = wind_spd, color = wind_spd))
+p <- p + geom_tile()
 p <- p + facet_wrap(~ ordered(buoy_id), scales = "fixed")
-p <- p + theme_bw() + theme(
-  legend.position = "none"
-) + xlab(NULL)
+p <- p + theme_bw() + theme(axis.text.y = element_blank(), axis.ticks.y = element_blank()) + 
+  xlab(NULL) + ylab(NULL)
 p
 
 ## -----------------------------------------------------------------------------
@@ -72,23 +74,24 @@ p <- p + geom_tile(NULL)  # Remove the gray border for a cleaner plot.
 p
 
 ## ---- message = FALSE, warning = FALSE----------------------------------------
-windows <- forecastML::create_windows(data_train, window_length = 365, skip = 730,
-                                      include_partial_window = FALSE)
+windows <- forecastML::create_windows(data_train, window_length = 0)
 
-p <- plot(windows, data_train) + theme(legend.position = "none")
-p
+plot(windows, data_train)
 
 ## ---- message = FALSE, warning = FALSE----------------------------------------
-p <- plot(windows, data_train, group_filter = "buoy_id == 1") + 
-  theme(legend.position = "none")
-p
+plot(windows, data_train, group_filter = "buoy_id == 1") 
 
 ## -----------------------------------------------------------------------------
 # The value of outcome_col can also be set in train_model() with train_model(outcome_col = 1).
 model_function <- function(data, outcome_col = 1) {
   
-  # xgboost cannot handle missing outcomes data.
+  # xgboost cannot model factors directly so they'll be converted to numbers.
+  data[] <- lapply(data, as.numeric)
+  
+  # xgboost cannot handle missing outcomes data so we'll remove this.
   data <- data[!is.na(data[, outcome_col]), ]
+  
+  data[, outcome_col] <- data[, outcome_col] - 1  # xgboost needs factors to start at 0.
 
   indices <- 1:nrow(data)
   
@@ -106,7 +109,10 @@ model_function <- function(data, outcome_col = 1) {
                                     label = as.matrix(data[test_indices, 
                                                            outcome_col, drop = FALSE]))
 
-  params <- list("objective" = "reg:linear")
+  params <- list("objective" = "multi:softprob",
+                 "eval_metric" = "mlogloss",
+                 "num_class" = 4)  # Hard-coding the number of factor levels.
+
   watchlist <- list(train = data_train, test = data_test)
   
   set.seed(224)
@@ -122,43 +128,68 @@ model_function <- function(data, outcome_col = 1) {
 ## -----------------------------------------------------------------------------
 #future::plan(future::multiprocess)  # Multi-core or multi-session parallel training.
 
-model_results_cv <- forecastML::train_model(lagged_df = data_train,
-                                            windows = windows,
-                                            model_name = "xgboost",
-                                            model_function = model_function, 
-                                            use_future = FALSE)
+model_results <- forecastML::train_model(lagged_df = data_train,
+                                         windows = windows,
+                                         model_name = "xgboost",
+                                         model_function = model_function, 
+                                         use_future = FALSE)
 
 ## -----------------------------------------------------------------------------
-summary(model_results_cv$horizon_1$window_1$model)
+summary(model_results$horizon_1$window_1$model)
 
 ## -----------------------------------------------------------------------------
 # If 'model' is passed as a named list, the prediction model would be accessed with model$model or model["model"].
-prediction_function <- function(model, data_features) {
+prediction_function_prob <- function(model, data_features) {
+  
+  # xgboost cannot model factors directly so they'll be converted to numbers.
+  data_features[] <- lapply(data_features, as.numeric)
+  
   x <- xgboost::xgb.DMatrix(data = as.matrix(data_features))
-  data_pred <- data.frame("y_pred" = predict(model, x),
-                          "y_pred_lower" = predict(model, x) - 2,  # Optional; in practice, forecast bounds are not hard coded.
-                          "y_pred_upper" = predict(model, x) + 2)  # Optional; in practice, forecast bounds are not hard coded.
+  data_pred <- data.frame("y_pred" = predict(model, x, reshape = TRUE))  # 'reshape' returns a wide data.frame.
   return(data_pred)
 }
 
 ## -----------------------------------------------------------------------------
-data_pred_cv <- predict(model_results_cv, prediction_function = list(prediction_function), data = data_train)
+# We'll define a global variable with the factor levels.
+factor_levels <- levels(data_buoy_gaps$wind_spd)
+
+# If 'model' is passed as a named list, the prediction model would be accessed with model$model or model["model"].
+prediction_function_level <- function(model, data_features) {
+  
+  # xgboost cannot model factors directly so they'll be converted to numbers.
+  data_features[] <- lapply(data_features, as.numeric)
+  
+  x <- xgboost::xgb.DMatrix(data = as.matrix(data_features))
+  data_pred <- data.frame("y_pred" = predict(model, x, reshape = TRUE))  # 'reshape' returns a wide data.frame.
+  
+  data_pred$y_pred <- apply(data_pred, 1, which.max)  # Find the column with the highest probability.
+  data_pred$y_pred <- dplyr::recode(data_pred$y_pred, `1` = factor_levels[1], `2` = factor_levels[2], 
+                                    `3` = factor_levels[3], `4` = factor_levels[4])
+
+  data_pred$y_pred <- factor(data_pred$y_pred, levels = factor_levels, ordered = TRUE)
+
+  data_pred <- data_pred[, "y_pred", drop = FALSE]
+  return(data_pred)
+}
+
+## -----------------------------------------------------------------------------
+data_pred_prob <- predict(model_results, prediction_function = list(prediction_function_prob), data = data_train)
+
+data_pred_level <- predict(model_results, prediction_function = list(prediction_function_level), data = data_train)
 
 ## ---- message = FALSE, warning = FALSE----------------------------------------
-plot(data_pred_cv) + theme(legend.position = "none")
+plot(data_pred_prob, horizons = 7, group_filter = "buoy_id %in% c(1, 2)")
 
 ## ---- message = FALSE, warning = FALSE----------------------------------------
-plot(data_pred_cv, facet = group ~ model, group_filter = "buoy_id %in% c(1, 2, 3)", windows = 1) 
+inspect_dates <- seq(as.Date("2018-01-01"), as.Date("2018-12-31"), by = "1 day")
+
+plot(data_pred_level[data_pred_level$date_indices %in% inspect_dates, ], horizons = 7, group_filter = "buoy_id %in% c(1, 2)")
 
 ## ---- message = FALSE, warning = FALSE----------------------------------------
-plot(data_pred_cv, facet = group ~ horizon, group_filter = "buoy_id %in% c(1, 2, 3)", windows = 1) 
+data_error <- forecastML::return_error(data_pred_level, metric = "mae")
 
-## ---- message = FALSE, warning = FALSE----------------------------------------
-data_error <- forecastML::return_error(data_pred_cv)
-
-plot(data_error, data_pred_cv, type = "time", group_filter = "buoy_id %in% c(1, 2, 3)", metric = "mae")
-plot(data_error, data_pred_cv, type = "horizon", group_filter = "buoy_id %in% c(1, 2, 3)", metric = "mae")
-plot(data_error, data_pred_cv, type = "global", group_filter = "buoy_id %in% c(1, 2, 3)", metric = "mae")
+plot(data_error, data_pred_level, type = "horizon", metric = "mae")
+plot(data_error, data_pred_level, type = "global", metric = "mae")
 
 ## -----------------------------------------------------------------------------
 type <- "forecast"  # Create a forecasting dataset for our predict() function.
@@ -179,51 +210,21 @@ for (i in seq_along(data_forecast)) {
 }
 
 ## -----------------------------------------------------------------------------
-data_forecasts <- predict(model_results_cv, prediction_function = list(prediction_function), data = data_forecast)
+data_forecasts_prob <- predict(model_results, prediction_function = list(prediction_function_prob), data = data_forecast)
+
+data_forecasts_level <- predict(model_results, prediction_function = list(prediction_function_level), data = data_forecast)
 
 ## ---- message = FALSE, warning = FALSE----------------------------------------
-plot(data_forecasts)
+plot(data_forecasts_prob, group_filter = "buoy_id %in% c(1, 2)")
 
 ## ---- message = FALSE, warning = FALSE----------------------------------------
-plot(data_forecasts, facet = group ~ ., group_filter = "buoy_id %in% 1:3")
+plot(data_forecasts_level, group_filter = "buoy_id %in% c(1, 2)")
 
 ## ---- message = FALSE, warning = FALSE----------------------------------------
-windows <- forecastML::create_windows(data_train, window_length = 0)
+data_combined_prob <- forecastML::combine_forecasts(data_forecasts_prob)
+data_combined_level <- forecastML::combine_forecasts(data_forecasts_level)
 
-p <- plot(windows, data_train) + theme(legend.position = "none")
-p
-
-## -----------------------------------------------------------------------------
-# Un-comment the code below and set 'use_future' to TRUE.
-#future::plan(future::multiprocess)
-
-model_results_no_cv <- forecastML::train_model(lagged_df = data_train, 
-                                               windows = windows,
-                                               model_name = "xgboost",
-                                               model_function = model_function,
-                                               use_future = FALSE)
-
-## -----------------------------------------------------------------------------
-data_forecasts <- predict(model_results_no_cv, prediction_function = list(prediction_function), data = data_forecast)
-
-DT::datatable(head(data_forecasts), options = list(scrollX = TRUE))
-
-## ---- message = FALSE, warning = FALSE----------------------------------------
-data_combined <- forecastML::combine_forecasts(data_forecasts)
-
-# Plot a background dataset of actuals using the most recent data.
-data_actual <- data[dates >= as.Date("2018-11-01"), ]
-actual_indices <- dates[dates >= as.Date("2018-11-01")]
-
-# Plot all final forecasts plus historical data.
-plot(data_combined, data_actual = data_actual, actual_indices = actual_indices)
-
-## ---- message = FALSE, warning = FALSE----------------------------------------
-plot(data_combined, data_actual = data_actual, actual_indices = actual_indices, 
-     facet = group ~ ., group_filter = "buoy_id %in% c(1, 11, 12)")
-
-## -----------------------------------------------------------------------------
-# Plot final forecasts for a single buoy plus historical data.
-plot(data_combined, data_actual = data_actual, actual_indices = actual_indices,
-     group_filter = "buoy_id == 10")
+# Plot the final forecasts.
+plot(data_combined_prob, group_filter = "buoy_id %in% c(1, 2)")
+plot(data_combined_level, group_filter = "buoy_id %in% c(1, 2)")
 

@@ -28,7 +28,7 @@ return_hyper <- function(forecast_model, hyper_function) {
   }
 
   outcome_col <- attributes(forecast_model)$outcome_col
-  outcome_names <- attributes(forecast_model)$outcome_names
+  outcome_name <- attributes(forecast_model)$outcome_name
   horizon <- attributes(forecast_model)$horizons
 
   # Defined here to catch (from '<<-' below) the user-defined hyperparameter names in hyper_function.
@@ -64,7 +64,7 @@ return_hyper <- function(forecast_model, hyper_function) {
   data_out <- dplyr::bind_rows(data_out)
 
   attr(data_out, "outcome_col") <- outcome_col
-  attr(data_out, "outcome_names") <- outcome_names
+  attr(data_out, "outcome_name") <- outcome_name
   attr(data_out, "hyper_names") <- hyper_names
 
   class(data_out) <- c("forecast_model_hyper", class(data_out))
@@ -95,10 +95,6 @@ plot.forecast_model_hyper <- function(x, data_results, data_error,
                                       horizons = NULL,
                                       windows = NULL, ...) { # nocov start
 
-  if(!methods::is(x, "forecast_model_hyper")) {
-    stop("The 'x' argument takes an object of class 'forecast_model_hyper' as input. Run return_hyper() first.")
-  }
-
   if(!methods::is(data_results, "training_results")) {
     stop("The 'data_results' argument takes an object of class 'training_results' as input. Run predict.forecast_model() first.")
   }
@@ -111,13 +107,16 @@ plot.forecast_model_hyper <- function(x, data_results, data_error,
 
   type <- type[1]
 
-  # Change the name of "horizon", which, although it makes sense from a naming perspective, will reduce the amount of code below.
-  data_results$horizon <- data_results$model_forecast_horizon
-  data_results$model_forecast_horizon <- NULL
-
+  method <- attributes(data_results)$method
   outcome_col <- attributes(data_plot)$outcome_col
-  outcome_names <- attributes(data_plot)$outcome_names
+  outcome_name <- attributes(data_plot)$outcome_name
   hyper_names <- attributes(data_plot)$hyper_names
+
+  if (method == "direct") {
+    # Change the name of "horizon", which, although it makes sense from a naming perspective, will reduce the amount of code below.
+    data_results$horizon <- data_results$model_forecast_horizon
+    data_results$model_forecast_horizon <- NULL
+  }
 
   hyper_num <- unlist(lapply(data_plot[, hyper_names], function(x) {inherits(x, c("numeric", "double", "integer"))}))
   hyper_num <- hyper_names[hyper_num]
@@ -202,7 +201,9 @@ plot.forecast_model_hyper <- function(x, data_results, data_error,
     }
 
     p <- ggplot()
+
     if (length(hyper_num) > 0) {
+
       if (length(unique(data_hyper_num$window_number)) > 1) {
         p <- p + geom_line(data = data_hyper_num,
                            aes(x = .data$value,
@@ -223,6 +224,7 @@ plot.forecast_model_hyper <- function(x, data_results, data_error,
     }  # End numeric hyperparameter plot.
 
     if (length(hyper_cat) > 0) {
+
       p_cat <- ggplot()
       p_cat <- p_cat + geom_col(data = data_hyper_cat,
                                 aes(x = ordered(.data$value), y = .data$error,

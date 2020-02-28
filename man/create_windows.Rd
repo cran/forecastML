@@ -4,8 +4,14 @@
 \alias{create_windows}
 \title{Create time-contiguous validation datasets for model evaluation}
 \usage{
-create_windows(lagged_df, window_length = 12L, window_start = NULL,
-  window_stop = NULL, skip = 0, include_partial_window = TRUE)
+create_windows(
+  lagged_df,
+  window_length = 12L,
+  window_start = NULL,
+  window_stop = NULL,
+  skip = 0,
+  include_partial_window = TRUE
+)
 }
 \arguments{
 \item{lagged_df}{An object of class 'lagged_df' or 'grouped_lagged_df' from \code{\link{create_lagged_df}}.}
@@ -33,7 +39,7 @@ in \code{create_lagged_df()}, the time between validation windows is \code{skip}
 An S3 object of class 'windows': A data.frame giving the indices for the validation datasets.
 }
 \description{
-Flexibly ceate blocks of time-contiguous validation datasets to assess forecast accuracy
+Flexibly create blocks of time-contiguous validation datasets to assess the forecast accuracy
 of trained models at various times in the past. These validation datasets are similar to
 the outer loop of a nested cross-validation model training setup.
 }

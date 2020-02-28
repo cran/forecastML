@@ -1,7 +1,7 @@
-## ---- include = FALSE----------------------------------------------------
-knitr::opts_chunk$set(fig.width = 6, fig.height = 4)
+## ---- include = FALSE---------------------------------------------------------
+knitr::opts_chunk$set(fig.width = 7.15, fig.height = 4)
 
-## ---- message = FALSE, warning = FALSE-----------------------------------
+## ---- message = FALSE, warning = FALSE----------------------------------------
 library(DT)
 library(dplyr)
 library(ggplot2)
@@ -15,7 +15,7 @@ data <- data[, c("DriversKilled", "kms", "PetrolPrice", "law")]
 
 dates <- seq(as.Date("1969-01-01"), as.Date("1984-12-01"), by = "1 month")
 
-## ------------------------------------------------------------------------
+## -----------------------------------------------------------------------------
 data_train <- forecastML::create_lagged_df(data,
                                            type = "train",
                                            outcome_col = 1, 
@@ -27,18 +27,18 @@ data_train <- forecastML::create_lagged_df(data,
 # View the horizon 3 lagged dataset.
 DT::datatable(head((data_train$horizon_3)), options = list("scrollX" = TRUE))
 
-## ------------------------------------------------------------------------
+## -----------------------------------------------------------------------------
 windows <- forecastML::create_windows(data_train, window_length = 0, 
                                       window_start = as.Date("1984-01-01"),
                                       window_stop = as.Date("1984-12-01"))
 
 plot(windows, data_train)
 
-## ------------------------------------------------------------------------
+## -----------------------------------------------------------------------------
 attributes(data_train$horizon_3)$horizon
 attributes(data_train$horizon_12)$horizon
 
-## ------------------------------------------------------------------------
+## -----------------------------------------------------------------------------
 model_function <- function(data, my_outcome_col = 1, n_tree = c(200, 100)) {
 
   outcome_names <- names(data)[my_outcome_col]
@@ -64,14 +64,14 @@ model_function <- function(data, my_outcome_col = 1, n_tree = c(200, 100)) {
   }
 }
 
-## ------------------------------------------------------------------------
+## -----------------------------------------------------------------------------
 model_results <- forecastML::train_model(data_train, windows, model_name = "RF", model_function)
 
-## ------------------------------------------------------------------------
+## -----------------------------------------------------------------------------
 model_results$horizon_3$window_1$model
 model_results$horizon_12$window_1$model
 
-## ------------------------------------------------------------------------
+## -----------------------------------------------------------------------------
 prediction_function <- function(model, data_features) {
   
     if (model$meta_data == 3) {  # Perform a transformation specific to model 1.
@@ -87,11 +87,11 @@ prediction_function <- function(model, data_features) {
   return(data_pred)
 }
 
-## ------------------------------------------------------------------------
+## -----------------------------------------------------------------------------
 data_results <- predict(model_results,
                         prediction_function = list(prediction_function),
                         data = data_train)
 
-## ------------------------------------------------------------------------
+## -----------------------------------------------------------------------------
 plot(data_results)
 

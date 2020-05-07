@@ -1,6 +1,6 @@
 ## ---- include = FALSE---------------------------------------------------------
-knitr::opts_chunk$set(fig.width = 7.15, fig.height = 4)
-knitr::opts_knit$set(fig.width = 7.15, fig.height = 4)
+knitr::opts_chunk$set(fig.width = 7.15, fig.height = 4, warning = FALSE, message = FALSE)
+knitr::opts_knit$set(fig.width = 7.15, fig.height = 4, warning = FALSE, message = FALSE)
 
 ## ---- message = FALSE, warning = FALSE----------------------------------------
 library(forecastML)
@@ -156,9 +156,9 @@ plot(data_pred_cv, facet = group ~ horizon, group_filter = "buoy_id %in% c(1, 2,
 ## ---- message = FALSE, warning = FALSE----------------------------------------
 data_error <- forecastML::return_error(data_pred_cv)
 
-plot(data_error, data_pred_cv, type = "time", group_filter = "buoy_id %in% c(1, 2, 3)", metric = "mae")
-plot(data_error, data_pred_cv, type = "horizon", group_filter = "buoy_id %in% c(1, 2, 3)", metric = "mae")
-plot(data_error, data_pred_cv, type = "global", group_filter = "buoy_id %in% c(1, 2, 3)", metric = "mae")
+plot(data_error, type = "window", group_filter = "buoy_id %in% c(1, 2, 3)", metric = "mae")
+plot(data_error, type = "horizon", group_filter = "buoy_id %in% c(1, 2, 3)", metric = "mae")
+plot(data_error, type = "global", group_filter = "buoy_id %in% c(1, 2, 3)", metric = "mae")
 
 ## -----------------------------------------------------------------------------
 type <- "forecast"  # Create a forecasting dataset for our predict() function.

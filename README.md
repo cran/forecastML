@@ -7,6 +7,7 @@
 [![Travis Build
 Status](https://travis-ci.org/nredell/forecastML.svg?branch=master)](https://travis-ci.org/nredell/forecastML) 
 [![codecov](https://codecov.io/github/nredell/forecastML/branch/master/graphs/badge.svg)](https://codecov.io/github/nredell/forecastML)
+[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/nredell/forecastML/master?urlpath=https%3A%2F%2Fgithub.com%2Fnredell%2FforecastML%2Ftree%2Fmaster%2Fnotebooks%2F)
 
 # package::forecastML <img src="./man/figures/forecastML_logo.png" alt="forecastML logo" align="right" height="138.5" style="display: inline-block;">
 
@@ -24,11 +25,13 @@ The following quote from Bergmeir et al.'s article nicely sums up the aim of thi
 > (e.g., when using Machine Learning methods), the aforementioned problems of CV are largely
 > irrelevant, and CV can and should be used without modification, as in the independent case."
 
-At a glance, `forecastML` supports the following approaches when forecasting with machine learning methods:
+## Featured Notebooks
 
-<p align="center">
-  <img src="./tools/features_table.png" width="715px" height="400px"></img>
-</p>
+* **[Forecasting with big data - Spark and H2O](https://github.com/nredell/forecastML/blob/master/notebooks/Forecasting%20with%20big%20data%20-%20Spark%20and%20H2O.ipynb)**
+
+* **Forecasting with Python - scikit-learn in parallel** (coming soon)
+
+User-contributed notebooks welcome!
 
 
 ## Lightning Example
@@ -81,7 +84,6 @@ plot(data_forecasts, data_actual = data_seatbelts[-(1:100), ], actual_indices = 
         + **[Direct forecasting](#direct-forecast-in-r)**
         + **[Multi-output forecasting](#multi-output-forecast-in-r)**
     + **[Forecasting factor outcomes (forecasting sequences)](#examples---factor-outcomes-with-r-and-python)**
-* **[Roadmap](#roadmap)**
 
 
 ## Install
@@ -96,7 +98,7 @@ library(forecastML)
 * Development
 
 ``` r
-devtools::install_github("nredell/forecastML")
+remotes::install_github("nredell/forecastML")
 library(forecastML)
 ```
 
@@ -136,7 +138,7 @@ The multi-output forecasting approach used in `forecastML` involves the followin
 
 **2.** Assess model generalization performance across a variety of heldout datasets through time.
 
-**3.** Select the hyperparamters that minimize forecast error overall the relevant forecast horizons and re-train.
+**3.** Select the hyperparamters that minimize forecast error over all the relevant forecast horizons and re-train.
 
 
 ## Vignettes
@@ -158,6 +160,8 @@ The main functions covered in each vignette are shown below as `function()`.
 
 * **[Customizing the user-defined wrapper functions](https://nredell.github.io/forecastML/doc/custom_functions.html)**. 
 `train()` and `predict()`
+
+* **[Forecast combinations](https://nredell.github.io/forecastML/doc/combine_forecasts)**. `combine_forecasts()`
 
 
 ## Cheat Sheets
@@ -711,11 +715,3 @@ plot(data_forecasts_prob)
 ```
 
 ![](./tools/sequence_forecast_prob.png)
-
-
-## Roadmap
-
-* Add more forecast error metrics.
-
-* Add confidence/credible forecast intervals based on validation window performance.
- 

@@ -8,9 +8,12 @@
 #' @param ... One or more objects of class 'forecast_results' from running \code{predict.forecast_model()} on
 #' an input forward-looking forecast dataset. These are the forecasts from the horizon-specific
 #' direct forecasting models trained over the entire training dataset by setting \code{create_windows(..., window_length = 0)}.
-#' If multiple models are passed in \code{...}, the model names from \code{train_model()} should be unique for a
-#' given model forecast horizon.
+#' If multiple models are passed in \code{...} with the same direct forecast horizon, for \code{type = 'horizon'},
+#' forecasts for the same direct forecast horizon are combined with \code{aggregate}; for \code{type = 'error'}, the model that
+#' minimizes the error metric at the given direct forecast horizon produces the forecast.
 #' @param type Default: 'horizon'. A character vector of length 1 that identifies the forecast combination method.
+#' @param aggregate Default \code{median} for \code{type = 'horizon'}. A function--without parentheses--that aggregates forecasts if
+#' more than one model passed in \code{...} has the same direct forecast horizon and \code{type = 'horizon'].}
 #' @param data_error Optional. A list of objects of class 'validation_error' from running \code{return_error()}
 #' on a training dataset. The length and order of \code{data_error} should match the models passed in \code{...}.
 #' @param metric Required if \code{data_error} is given. A length 1 character vector naming the forecast
@@ -47,7 +50,7 @@
 #'
 #' @example /R/examples/example_combine_forecasts.R
 #' @export
-combine_forecasts <- function(..., type = c("horizon", "error"), data_error = list(NULL), metric = NULL) {
+combine_forecasts <- function(..., type = c("horizon", "error"), aggregate = stats::median, data_error = list(NULL), metric = NULL) {
 
   #----------------------------------------------------------------------------
   data_forecast_list <- list(...)
@@ -72,8 +75,8 @@ combine_forecasts <- function(..., type = c("horizon", "error"), data_error = li
   groups <- attributes(data_forecast_list[[1]])$groups
   data_stop <- attributes(data_forecast_list[[1]])$data_stop
 
+  data_forecast_list <- lapply(data_forecast_list, tibble::as_tibble)
   data_forecast <- dplyr::bind_rows(data_forecast_list)  # Collapse the forecast_results list(...).
-  data_forecast <- dplyr::as_tibble(data_forecast)
   #----------------------------------------------------------------------------
   # For factor outcomes, is the prediction a factor level or probability?
   if (!is.null(outcome_levels)) {
@@ -96,62 +99,74 @@ combine_forecasts <- function(..., type = c("horizon", "error"), data_error = li
     stop("Horizon-based forecast combinations are not needed for multi-output models because there is only one model.
          Validation-error-based forecast combinations are available for combining multiple multi-output models.")
   }
+  #----------------------------------------------------------------------------
+  # Because different model forecast horizons could be passed in '...'--e.g., model A = 1- and 12-step-
+  # ahead models and model B = 3-, 6-, and 9-step ahead models--, we'll combine the horizon-specific
+  # forecasts into a single forecast using the function passed in 'aggregate'.
+  if (type == "horizon" && is.null(outcome_levels)) {
 
-  if (type == "horizon") {
+    if (length(unique(data_forecast$model)) > 1) {
+      data_forecast$model <- "Ensemble"
+    }
 
-    # Because different model forecast horizons could be passed in '...'--e.g., model A = 1- and 12-step-
-    # ahead models and model B = 3-, 6-, and 9-step ahead models--, we'll combine the horizon-specific
-    # forecasts into a singular forecast separately for each model.
-    forecast_combination <- lapply(seq_along(data_forecast_list), function(i) {
+    forecast_intervals <- paste0(outcome_name, "_pred_lower") %in% names(data_forecast)
 
-      data_forecast <- data_forecast_list[[i]]
+    if (!forecast_intervals) {
 
-      model_forecast_horizons <- sort(unique(data_forecast$model_forecast_horizon))
+      data_forecast <- data_forecast %>%
+        dplyr::group_by(.data$model, .data$model_forecast_horizon, .data$horizon, !!!rlang::syms(groups), .data$forecast_period) %>%
+        dplyr::summarize(!!paste0(outcome_name, "_pred") := aggregate(!!rlang::sym(paste0(outcome_name, "_pred"))))
 
-      horizons <- sort(unique(data_forecast$horizon))
+    } else {
 
-      #------------------------------------------------------------------------
-      # Create a list of forecast horizons where each horizon-specific model will produce
-      # a forecast. This is a greedy selection method where the final forecast is a combination of horizon-specific
-      # models--the combination being that longer-term models only contribute forecasts that are not
-      # already being contributed by shorter-term models.
-      horizon_filter <- lapply(seq_along(model_forecast_horizons), function(i) {
+      data_forecast <- data_forecast %>%
+        dplyr::group_by(.data$model, .data$model_forecast_horizon, .data$horizon, !!!rlang::syms(groups), .data$forecast_period) %>%
+        dplyr::summarize(!!paste0(outcome_name, "_pred") := aggregate(!!rlang::sym(paste0(outcome_name, "_pred"))),
+                      !!paste0(outcome_name, "_pred_lower") := aggregate(!!rlang::sym(paste0(outcome_name, "_pred_lower"))),
+                      !!paste0(outcome_name, "_pred_upper") := aggregate(!!rlang::sym(paste0(outcome_name, "_pred_upper"))))
+    }
+    #------------------------------------------------------------------------
+    # Create a list of forecast horizons where each horizon-specific model will produce
+    # a forecast. This is a greedy selection method where the final forecast is a combination of horizon-specific
+    # models--the combination being that longer-term models only contribute forecasts that are not
+    # already being contributed by shorter-term models.
+    model_forecast_horizons <- sort(unique(data_forecast$model_forecast_horizon))
 
-        if (i == 1) {
+    horizon_filter <- lapply(seq_along(model_forecast_horizons), function(i) {
 
-          if (model_forecast_horizons[i] == 1) {
+      if (i == 1) {
 
-            x <- 1
+        if (model_forecast_horizons[i] == 1) {
 
-          } else {
-
-            x <- seq(1, model_forecast_horizons[i])
-          }
-
-        } else if (i < max(seq_along(model_forecast_horizons))) {
-
-          x <- seq(model_forecast_horizons[i - 1] + 1, model_forecast_horizons[i], 1)
+          x <- 1
 
         } else {
 
-          x <- seq(model_forecast_horizons[i - 1] + 1, model_forecast_horizons[i], 1)
+          x <- seq(1, model_forecast_horizons[i])
         }
-      })  # End the creation of model-specific forecast combination horizon filter indices.
-      #--------------------------------------------------------------------------
-      # Filter the results so that short-term forecasts from shorter-term horizon-specific models overwrite
-      # short-term forecasts from longer-term horizon-specific models.
-      data_forecast <- lapply(seq_along(model_forecast_horizons), function(i) {
 
-        data_forecast[data_forecast$model_forecast_horizon == model_forecast_horizons[i] &
-                      data_forecast$horizon %in% horizon_filter[[i]], ]
-      })
-      data_forecast <- dplyr::bind_rows(data_forecast)
-      data_forecast <- dplyr::select(data_forecast, -.data$window_length, -.data$window_number)
-      data_forecast <- dplyr::arrange(data_forecast, .data$horizon)
-      data_forecast <- as.data.frame(data_forecast)
-    })  # End forecast combination for all models given in '...'.
+      } else if (i < max(seq_along(model_forecast_horizons))) {
+
+        x <- seq(model_forecast_horizons[i - 1] + 1, model_forecast_horizons[i], 1)
+
+      } else {
+
+        x <- seq(model_forecast_horizons[i - 1] + 1, model_forecast_horizons[i], 1)
+      }
+    })  # End the creation of model-specific forecast combination horizon filter indices.
     #--------------------------------------------------------------------------
-    data_forecast <- dplyr::bind_rows(forecast_combination)
+    # Filter the results so that short-term forecasts from shorter-term horizon-specific models overwrite
+    # short-term forecasts from longer-term horizon-specific models.
+    data_forecast <- lapply(seq_along(model_forecast_horizons), function(i) {
+
+      data_forecast[data_forecast$model_forecast_horizon == model_forecast_horizons[i] &
+                    data_forecast$horizon %in% horizon_filter[[i]], ]
+    })
+
+    data_forecast <- dplyr::bind_rows(data_forecast)
+    data_forecast <- dplyr::arrange(data_forecast, .data$horizon)
+    data_forecast <- as.data.frame(data_forecast)
+    #--------------------------------------------------------------------------
 
   } else if (type == "error") {
 
@@ -183,6 +198,7 @@ combine_forecasts <- function(..., type = c("horizon", "error"), data_error = li
     data_forecast <- as.data.frame(data_forecast)
   }  # End type = "error".
 
+  attr(data_forecast, "type") <- type
   attr(data_forecast, "outcome_name") <- outcome_name
   attr(data_forecast, "outcome_levels") <- outcome_levels
   attr(data_forecast, "groups") <- groups
@@ -231,6 +247,8 @@ plot.forecastML <- function(x, data_actual = NULL, actual_indices = NULL, facet 
   data_stop <- attributes(data_forecast)$data_stop
   metric <- attributes(data_forecast)$metric
   horizons <- unique(data_forecast$horizon)
+
+  data_forecast <- tibble::as_tibble(data_forecast)
 
   if (!is.null(outcome_levels) && !is.null(groups) && !is.null(data_actual)) {
     stop("Plotting forecasts from grouped time series with an actuals dataset is not currently supported.")
@@ -445,7 +463,7 @@ plot.forecastML <- function(x, data_actual = NULL, actual_indices = NULL, facet 
       #------------------------------------------------------------------------
       p <- p + scale_color_viridis_d()
       p <- p + facet_grid(facet, scales = "free_y")
-      p <- p + theme_bw()
+      p <- p + theme_bw() + theme(panel.spacing = unit(0, "lines"))
       #--------------------------------------------------------------------------
     } else {  # Factor outcome.
 
@@ -472,7 +490,7 @@ plot.forecastML <- function(x, data_actual = NULL, actual_indices = NULL, facet 
             # actual or forecast: these are all actuals.
             data_actual$actual_or_forecast <- "actual"
             # historical, test, or model_forecast: these may be any combination of historical data and a holdout test dataset.
-            data_actual$time_series_type <- with(data_actual, ifelse(index <= attributes(data_forecast)$data_stop, "historical", "test"))
+            data_actual$time_series_type <- with(data_actual, ifelse(index <= data_stop, "historical", "test"))
             names(data_actual)[names(data_actual) == outcome_name] <- "outcome"  # Standardize before concat with forecasts.
             data_actual$ggplot_color_group <- "Actual"  # Actuals will be plotted in the top plot facet.
             data_actual$value <- 1  # Plot a solid bar with probability 1 in geom_col().
@@ -532,7 +550,7 @@ plot.forecastML <- function(x, data_actual = NULL, actual_indices = NULL, facet 
           # actual or forecast: these are all actuals.
           data_actual$actual_or_forecast <- "actual"
           # historical, test, or model_forecast: these may be any combination of historical data and a holdout test dataset.
-          data_actual$time_series_type <- with(data_actual, ifelse(index <= attributes(data_forecast)$data_stop, "historical", "test"))
+          data_actual$time_series_type <- with(data_actual, ifelse(index <= data_stop, "historical", "test"))
           names(data_actual)[names(data_actual) == outcome_name] <- "outcome"  # Standardize before concat with forecasts.
           data_actual$ggplot_color_group <- "Actual"  # Actuals will be plotted in the top plot facet.
           data_actual$value <- 1  # Plot a solid bar with probability 1 in geom_col().

@@ -61,10 +61,13 @@ train_model <- function(lagged_df, windows, model_name, model_function, ..., use
   row_indices <- attributes(lagged_df)$row_indices
   date_indices <- attributes(lagged_df)$date_indices
   horizons <- attributes(lagged_df)$horizons
+  data_start <- attributes(lagged_df)$data_start
+  data_stop <- attributes(lagged_df)$data_stop
+  skeleton <- attributes(lagged_df)$skeleton
 
   # These are the arguments from the user-defined modeling function passed in train_model() with ...
   # which is optional but potentially convenient for the user who can avoid re-defining the modeling function
-  # in repeated calls to train_model(). The arguments in ... will passed as a named list in do.call(). This
+  # in repeated calls to train_model(). The arguments in ... will be passed as a named list in do.call(). This
   # local scoping within future_lapply() appears to be necessary because global arguments passed in ...
   # aren't being found by the future package when use_future = TRUE.
   n_args <- ...length()
@@ -99,7 +102,6 @@ train_model <- function(lagged_df, windows, model_name, model_function, ..., use
     lapply_across_val_windows <- base::lapply
   }
   #----------------------------------------------------------------------------
-
   # Seq along model forecast horizon > cross-validation windows.
   data_out <- lapply_across_horizons(lagged_df, function(data, future.seed, ...) {  # model forecast horizon.
 
@@ -114,15 +116,16 @@ train_model <- function(lagged_df, windows, model_name, model_function, ..., use
 
       } else {
 
-        # When create_lagged_df(..., keep_rows = FALSE) the validation indices need an offset to account for the fact that
-        # validation windows are selected where row_indices %in% valid_indices which maps back to the input dataset which will
-        # have 1:max(lookback) more rows than the dataset that comes out of create_lagged_df(..., keep_rows = FALSE).
+        # When create_lagged_df(..., groups = NULL, keep_rows = FALSE), the validation indices need an offset to account for the fact that
+        # validation windows are selected where row_indices %in% valid_indices which maps back to the input dataset to create_lagged_df()
+        # which will have 1:max(lookback) more rows than the dataset that comes out of create_lagged_df(..., groups = NULL, keep_rows = FALSE).
         valid_indices <- min(row_indices) - 1 + which(date_indices >= windows[i, "start"] & date_indices <= windows[i, "stop"])
         valid_indices_date <- date_indices[date_indices >= windows[i, "start"] & date_indices <= windows[i, "stop"]]
       }
 
-      # A window length of 0 removes the nested cross-validation and trains on all input data in lagged_df.
-      if (window_length == 0) {
+      # A window length of 0 that spans the entire dataset removes the nested cross-validation and
+      # trains on all input data in lagged_df.
+      if (window_length == 0 && (windows[i, "start"] == data_start) && (windows[i, "stop"] == data_stop)) {
 
         # Model training over all data.
         if (n_args == 0) {  # No user-defined model args passed in ...
@@ -131,21 +134,25 @@ train_model <- function(lagged_df, windows, model_name, model_function, ..., use
 
         } else {
 
-          model <- try({
-            do.call(model_function, append(list(data), model_function_args))
-          })
+          model <- try(do.call(model_function, append(list(data), model_function_args)))
         }
 
-      } else {  # Model training with cv.
+      } else {  # Model training with external block-contiguous cv.
+
+        # These validation indices will always start at 1. They index with respect to the
+        # data passed into model_function() as opposed to the dataset passed in create_lagged_df().
+        # These indices, stored as an attribute, are for manual filtering any skeleton lagged_dfs in model_function().
+        validation_indices <- which(row_indices %in% valid_indices)
+        attributes(data)$validation_indices <- validation_indices
 
         if (n_args == 0) {  # No user-defined model args passed in ...
 
-          model <- try(model_function(data[!row_indices %in% valid_indices, , drop = FALSE]))
+          model <- try(model_function(data[-(validation_indices), , drop = FALSE]))
 
         } else {
 
           model <- try({
-              do.call(model_function, append(list(data[!row_indices %in% valid_indices, , drop = FALSE]), model_function_args))
+              do.call(model_function, append(list(data[-(validation_indices), , drop = FALSE]), model_function_args))
             })
           }
       }
@@ -176,6 +183,8 @@ train_model <- function(lagged_df, windows, model_name, model_function, ..., use
   attr(data_out, "data_stop") <- attributes(lagged_df)$data_stop
   attr(data_out, "groups") <- attributes(lagged_df)$groups
   attr(data_out, "method") <- attributes(lagged_df)$method
+  attr(data_out, "skeleton") <- skeleton
+
 
   class(data_out) <- c("forecast_model", class(data_out))
 
@@ -277,6 +286,7 @@ predict.forecast_model <- function(..., prediction_function = list(NULL), data) 
   date_indices <- attributes(model_list[[1]])$date_indices
   frequency <- attributes(model_list[[1]])$frequency
   groups <- attributes(model_list[[1]])$groups
+  skeleton <- attributes(model_list[[1]])$skeleton
   #----------------------------------------------------------------------------
   if (type == "train") {
 
@@ -287,7 +297,7 @@ predict.forecast_model <- function(..., prediction_function = list(NULL), data) 
     data_stop <- attributes(data)$data_stop
   }
   #----------------------------------------------------------------------------
-  # Seq along forecast model > model forecast horizon > validation window number.
+  # Seq along forecast model[i] > model forecast horizon[j] > validation window number[k].
   data_model <- lapply(seq_along(model_list), function(i) {
 
     prediction_fun <- prediction_function[[i]]
@@ -301,8 +311,16 @@ predict.forecast_model <- function(..., prediction_function = list(NULL), data) 
         # Predict on training data or the forecast dataset?
         if (type == "train") {  # Nested cross-validation.
 
-          x_valid <- data[[j]][row_indices %in% data_results$valid_indices, -(outcome_cols), drop = FALSE]
-          y_valid <- data[[j]][row_indices %in% data_results$valid_indices, outcome_cols, drop = FALSE]  # Actuals in function return.
+          # These validation indices will always start at 1. They index with respect to the
+          # data passed into predict_function() as opposed to the dataset passed in create_lagged_df().
+          # These indices, stored as an attribute, are for manual filtering any skeleton lagged_dfs in predict_function().
+          validation_indices <- which(row_indices %in% data_results$valid_indices)
+
+          x_valid <- data[[j]][validation_indices, -(outcome_cols), drop = FALSE]
+          y_valid <- data[[j]][validation_indices, outcome_cols, drop = FALSE]  # Actuals in function return.
+
+          attributes(x_valid)$validation_indices <- validation_indices
+          attributes(x_valid)$horizons <- attributes(data[[j]])$horizons
 
           data_pred <- try(prediction_fun(data_results$model, x_valid))  # Nested cross-validation.
 
@@ -445,12 +463,12 @@ predict.forecast_model <- function(..., prediction_function = list(NULL), data) 
         data_temp$model <- as.character(data_temp$model)  # Coerce to remove any factor levels.
         data_temp
       })  # End cross-validation window predictions.
-      data_win_num <- dplyr::bind_rows(data_win_num)
+      data_win_num <- suppressMessages(dplyr::bind_rows(data_win_num))
     })  # End horizon-level predictions.
-    data_horizon <- dplyr::bind_rows(data_horizon)
+    data_horizon <- suppressMessages(dplyr::bind_rows(data_horizon))
   })  # End model-level predictions.
 
-  data_out <- dplyr::bind_rows(data_model)
+  data_out <- suppressMessages(dplyr::bind_rows(data_model))
 
   # For multi-output models, the data (a) need to be reshaped from a wide to long format
   # and (b) the validation indices that represent the forecast origin need to be changed
@@ -468,7 +486,7 @@ predict.forecast_model <- function(..., prediction_function = list(NULL), data) 
 
       data_out <- data_actual_temp
 
-      data_out$model_forecast_horizon <- horizons
+      data_out$model_forecast_horizon <- rep(horizons, nrow(data_out) / length(horizons))
 
       data_out$forecast_indices <- data_out$valid_indices
 
@@ -508,6 +526,7 @@ predict.forecast_model <- function(..., prediction_function = list(NULL), data) 
   }
 
   data_out <- as.data.frame(data_out)
+  row.names(data_out) <- 1:nrow(data_out)
 
   attr(data_out, "method") <- method
   attr(data_out, "horizons") <- horizons
@@ -585,6 +604,8 @@ plot.training_results <- function(x,
   frequency <- attributes(data)$frequency
   groups <- attributes(data)$group
   window_custom <- all(data$window_length == "custom")
+
+  data <- as.data.frame(data)  # Coerce to remove new vctrs warning about mismatched classes when joining data.
   #----------------------------------------------------------------------------
   if (method == "multi_output") {
 
@@ -814,7 +835,7 @@ plot.training_results <- function(x,
         if (is.null(groups)) {  # Single time series.
 
           p <- p + geom_line(data = data_plot[data_plot$outcome == outcome_name, ],
-                             aes(x = .data$index, y = .data$value), color = "grey50")
+                             aes(x = .data$index, y = .data$value, group = .data$ggplot_group), color = "grey50")
 
         } else {  # Actuals, grouped time series.
 
@@ -854,7 +875,7 @@ plot.training_results <- function(x,
         if (!is.null(facet)) {
           p <- p + facet_grid(facet, drop = TRUE)
         }
-        p <- p + theme_bw()
+        p <- p + theme_bw() + theme(panel.spacing = unit(0, "lines"))
 
     #--------------------------------------------------------------------------
     #--------------------------------------------------------------------------
@@ -886,7 +907,7 @@ plot.training_results <- function(x,
           p <- p + scale_color_viridis_d(drop = FALSE)
           p <- p + scale_fill_viridis_d(drop = FALSE)
           p <- p + facet_wrap(~ ggplot_color_group, ncol = 1, scales = "free_y")
-          p <- p + theme_bw()
+          p <- p + theme_bw() + theme(panel.spacing = unit(0, "lines"))
 
         } else {  # Plot class probabilities with grouped data.
 
@@ -970,7 +991,7 @@ plot.training_results <- function(x,
         p <- p + geom_hline(yintercept = 0)
         p <- p + scale_color_viridis_d()
         p <- p + facet_grid(facet, drop = TRUE)
-        p <- p + theme_bw()
+        p <- p + theme_bw() + theme(panel.spacing = unit(0, "lines"))
 
       } else {  # Factor outcome.
 
@@ -988,7 +1009,7 @@ plot.training_results <- function(x,
         # Plot predictions to avoid duplicate residuals in plots.
         p <- p + geom_tile(data = data_plot[data_plot$outcome != outcome_name, ], aes(x = .data$index, y = .data$ggplot_color_group,
                                                  fill = ordered(.data$residual)))
-        p <- p + theme_bw()
+        p <- p + theme_bw() + theme(panel.spacing = unit(0, "lines"))
       }
     }  # End residual plot.
     #--------------------------------------------------------------------------
@@ -1088,7 +1109,7 @@ plot.training_results <- function(x,
 
     p <- p + geom_line(data = data_outcome, aes(x = .data$index,
                                                 y = eval(parse(text = outcome_name))), color = "gray50")
-    p <- p + theme_bw()
+    p <- p + theme_bw() + theme(panel.spacing = unit(0, "lines"))
     p <- p + xlab("Dataset index") + ylab("Outcome") + labs(color = "Model") + labs(fill = NULL) +
       ggtitle("Rolling Origin Forecast Stability - Faceted by dataset index")
 
@@ -1141,6 +1162,8 @@ plot.forecast_results <- function(x, data_actual = NULL, actual_indices = NULL, 
   date_indices <- attributes(data_forecast)$date_indices
   groups <- attributes(data_forecast)$group
   data_stop <- attributes(data_forecast)$data_stop
+
+  data_forecast <- as.data.frame(data_forecast)  # Coerce to remove new vctrs warning about mismatched classes when joining data.
 
   if (!is.null(outcome_levels) && !is.null(groups) && !is.null(data_actual)) {
     stop("Plotting forecasts from grouped time series with an actuals dataset is not currently supported.")
@@ -1253,15 +1276,54 @@ plot.forecast_results <- function(x, data_actual = NULL, actual_indices = NULL, 
         data_actual$model <- rep(unique(data_plot$model), each = n_reps)
       }
       #--------------------------------------------------------------------------
+      # If the plot is colored by model, repeat the actuals dataset once for each model in a long format for faceting by model.
+      if (length(unique(data_plot$model)) == 1) {
 
-      data_actual$ggplot_color <- apply(data_actual[,  ggplot_color, drop = FALSE], 1, function(x) {paste(x, collapse = "-")})
+        data_actual$model <- unique(data_plot$model)
+
+      } else {
+
+        n_reps <- nrow(data_actual)
+        data_actual <- data_actual[rep(1:nrow(data_actual), length(unique(data_plot$model))), ]
+        data_actual$model <- rep(unique(data_plot$model), each = n_reps)
+      }
+      #--------------------------------------------------------------------------
+
+      if (length(ggplot_color) > 0) {
+
+        if (ggplot_color == "horizon") {
+
+          data_actual$ggplot_color <- NA
+
+        } else {
+
+          data_actual$ggplot_color <- apply(data_actual[,  ggplot_color, drop = FALSE], 1, function(x) {paste(x, collapse = "-")})
+        }
+      } else {
+
+        data_actual$ggplot_color <- "Forecast"
+      }
 
       # Give predictions a name in the legend if plot is faceted by model and horizon (and group if groups are given).
       if (length(ggplot_color) == 0) {
         data_actual$ggplot_color <- "Forecast"
       }
 
-      data_actual$ggplot_group <- apply(data_actual[,  ggplot_color, drop = FALSE], 1, function(x) {paste(x, collapse = "-")})
+      if (length(ggplot_color) > 0) {
+
+        if (ggplot_color == "horizon") {
+
+          data_actual$ggplot_group <- "Forecast"
+
+        } else {
+
+          data_actual$ggplot_group <- apply(data_actual[,  ggplot_color, drop = FALSE], 1, function(x) {paste(x, collapse = "-")})
+        }
+
+      } else {
+
+        data_actual$ggplot_group <- "Forecast"
+      }
       #------------------------------------------------------------------------
       # Coerce to viridis color scale with an ordered factor. The levels in the actual data are limited
       # to those factor levels that appear in the forecast data.
@@ -1357,7 +1419,7 @@ plot.forecast_results <- function(x, data_actual = NULL, actual_indices = NULL, 
       }
 
       p <- p + scale_color_viridis_d()
-      p <- p + theme_bw()
+      p <- p + theme_bw() + theme(panel.spacing = unit(0, "lines"))
       p <- p + facet_grid(facet, scales = "free_y")
 
     #--------------------------------------------------------------------------
@@ -1387,7 +1449,7 @@ plot.forecast_results <- function(x, data_actual = NULL, actual_indices = NULL, 
         # actual or forecast: these are all actuals.
         data_actual$actual_or_forecast <- "actual"
         # historical, test, or model_forecast: these may be any combination of historical data and a holdout test dataset.
-        data_actual$time_series_type <- with(data_actual, ifelse(index <= attributes(data_forecast)$data_stop, "historical", "test"))
+        data_actual$time_series_type <- with(data_actual, ifelse(index <= data_stop, "historical", "test"))
         names(data_actual)[names(data_actual) == outcome_name] <- "outcome"  # Standardize before concat with forecasts.
         data_actual$ggplot_color_group <- "Actual"  # Actuals will be plotted in the top plot facet.
         data_actual$value <- 1  # Plot a solid bar with probability 1 in geom_col().

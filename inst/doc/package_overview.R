@@ -67,7 +67,7 @@ DT::datatable(head(data_list$horizon_6, 10), options = list(scrollX = TRUE))
 plot(data_list)
 
 ## ---- warnings = FALSE, message = FALSE---------------------------------------
-windows <- forecastML::create_windows(lagged_df = data_list, window_length = 24, skip = 0,
+windows <- forecastML::create_windows(lagged_df = data_list, window_length = 12, skip = 48,
                                       window_start = NULL, window_stop = NULL,
                                       include_partial_window = TRUE)
 windows
@@ -120,11 +120,11 @@ model_results_2 <- forecastML::train_model(data_list, windows, model_name = "RF"
                                            model_function_2, use_future = FALSE)
 
 ## -----------------------------------------------------------------------------
-# Example 1 - LASSO
+# Example 1 - LASSO.
 prediction_function <- function(model, data_features) {
   
   if (length(model$constant_features) > 1) {  # 'model' was passed as a list.
-    data <- data[, -c(model$constant_features )]
+    data_features <- data_features[, -c(model$constant_features )]
   }
 
   x <- as.matrix(data_features, ncol = ncol(data_features))
@@ -133,14 +133,14 @@ prediction_function <- function(model, data_features) {
   return(data_pred)
 }
 
-# Example 2 - Random Forest
+# Example 2 - Random Forest.
 prediction_function_2 <- function(model, data_features) {
 
   data_pred <- data.frame("y_pred" = predict(model, data_features))
   return(data_pred)
 }
 
-## -----------------------------------------------------------------------------
+## ---- warning = FALSE, message = FALSE----------------------------------------
 data_results <- predict(model_results, model_results_2,
                         prediction_function = list(prediction_function, prediction_function_2), 
                         data = data_list)
@@ -153,26 +153,27 @@ DT::datatable(head(data_results, 30), options = list(scrollX = TRUE))
 plot(data_results, type = "prediction", horizons = c(1, 6, 12))
 
 ## -----------------------------------------------------------------------------
-plot(data_results, type = "residual", horizons = c(1, 6, 12), windows = 5:7)
+plot(data_results, type = "residual", horizons = c(1, 6, 12))
 
 ## -----------------------------------------------------------------------------
-plot(data_results, type = "forecast_stability", windows = max(data_results$window_number))
+plot(data_results, type = "forecast_stability", windows = 3)
 
-## -----------------------------------------------------------------------------
-data_error <- forecastML::return_error(data_results, metrics = c("mae", "mape", "smape"))
+## ---- warning = FALSE, message = FALSE----------------------------------------
+data_error <- forecastML::return_error(data_results)
 
-data_error$error_global[, c("mae", "mape", "smape")] <- lapply(data_error$error_global[, c("mae", "mape", "smape")], round, 1)
+# Global error.
+data_error$error_global[, -1] <- lapply(data_error$error_global[, -1], round, 1)
 
 DT::datatable(data_error$error_global, options = list(scrollX = TRUE), )
 
 ## -----------------------------------------------------------------------------
-plot(data_error, data_results, type = "time", facet = ~ horizon, horizons = c(1, 6, 12), windows = 5:7)
+plot(data_error, type = "window", facet = ~ horizon, horizons = c(1, 6, 12))
 
 ## -----------------------------------------------------------------------------
-plot(data_error, data_results, type = "horizon", facet = ~ horizon, horizons = c(1, 6, 12))
+plot(data_error, type = "horizon", facet = ~ horizon, horizons = c(1, 6, 12))
 
 ## -----------------------------------------------------------------------------
-plot(data_error, data_results, type = "global")
+plot(data_error, type = "global", facet = ~ horizon)
 
 ## -----------------------------------------------------------------------------
 hyper_function <- function(model) {
@@ -208,7 +209,7 @@ for (i in seq_along(data_forecast_list)) {
   data_forecast_list[[i]]$law <- 1
 }
 
-## -----------------------------------------------------------------------------
+## ---- warning = FALSE, message = FALSE----------------------------------------
 data_forecast <- predict(model_results, model_results_2,  # ... supports any number of ML models.
                          prediction_function = list(prediction_function, prediction_function_2), 
                          data = data_forecast_list)
@@ -226,12 +227,13 @@ plot(data_forecast,
 ## -----------------------------------------------------------------------------
 data_error <- forecastML::return_error(data_forecast,
                                        data_test = data_test,
-                                       test_indices = dates[(nrow(data_train) + 1):length(dates)],
-                                       metrics = c("mae", "mape", "smape", "mdape"))
+                                       test_indices = dates[(nrow(data_train) + 1):length(dates)])
 
-data_error$error_by_horizon[, c("mae", "mape", "smape", "mdape")] <- lapply(data_error$error_by_horizon[, c("mae", "mape", "smape", "mdape")], round, 1)
+plot(data_error, facet = ~ horizon, type = "window")
 
-DT::datatable(head(data_error$error_by_horizon, 10), options = list(scrollX = TRUE))
+plot(data_error, facet = ~ horizon, type = "horizon")
+
+plot(data_error, facet = ~ horizon, type = "global")
 
 ## -----------------------------------------------------------------------------
 data_list <- forecastML::create_lagged_df(data_train,
@@ -257,11 +259,10 @@ data_results <- predict(model_results, prediction_function = list(prediction_fun
 DT::datatable(head(data_results, 10), options = list(scrollX = TRUE))
 plot(data_results, type = "prediction", horizons = c(1, 6, 12))
 
-## -----------------------------------------------------------------------------
-data_error <- forecastML::return_error(data_results, metrics = c("mae", "mape", "mdape", "smape"),
-                                       models = NULL)
+## ---- warning = FALSE, message = FALSE----------------------------------------
+data_error <- forecastML::return_error(data_results)
 
-data_error$error_global[, c("mae", "mape", "mdape", "smape")] <- lapply(data_error$error_global[, c("mae", "mape", "mdape", "smape")], round, 1)
+data_error$error_global[, -1] <- lapply(data_error$error_global[, -1], round, 1)
 
 DT::datatable(head(data_error$error_global), options = list(scrollX = TRUE))
 
@@ -289,14 +290,9 @@ plot(data_forecast,
 
 ## -----------------------------------------------------------------------------
 data_error <- forecastML::return_error(data_forecast, data_test = data_test, 
-                                       test_indices = dates[(nrow(data_train) + 1):nrow(data)],
-                                       metrics = c("mae", "mape", "mdape", "smape"))
+                                       test_indices = dates[(nrow(data_train) + 1):nrow(data)])
 
-data_error$error_by_horizon[, c("mae", "mape", "mdape", "smape")] <- lapply(data_error$error_by_horizon[, c("mae", "mape", "mdape", "smape")], round, 1)
-
-data_error$error_global[, c("mae", "mape", "mdape", "smape")] <- lapply(data_error$error_global[, c("mae", "mape", "mdape", "smape")], round, 1)
-
-DT::datatable(data_error$error_global, options = list(scrollX = TRUE))
+plot(data_error, type = "horizon", facet = ~ horizon)
 
 ## ---- message = FALSE, warning = FALSE----------------------------------------
 data_combined <- forecastML::combine_forecasts(data_forecast)
@@ -307,4 +303,12 @@ actual_indices <- dates[dates >= as.Date("1980-01-01")]
 
 # Plot all final forecasts plus historical data.
 plot(data_combined, data_actual = data_actual, actual_indices = actual_indices)
+
+# Error by forecast horizon.
+DT::datatable(return_error(data_combined, data_actual, actual_indices)$error_by_horizon, 
+              options = list(scrollX = TRUE))
+
+# Error aggregated across forecast horizons.
+DT::datatable(return_error(data_combined, data_actual, actual_indices)$error_global, 
+              options = list(scrollX = TRUE))
 
